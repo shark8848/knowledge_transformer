@@ -4,6 +4,30 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 
 ## 快速开始
 
+### 方式一：Docker 部署（推荐）
+
+使用 Docker Compose 一键部署所有服务（包括 Redis、MinIO、API、Worker、Flower）：
+
+```bash
+# 1. 构建镜像
+./docker-build.sh
+
+# 2. 启动所有服务
+./docker-start.sh
+
+# 3. 查看服务状态
+./docker-status.sh
+```
+
+访问地址：
+- API 文档：http://localhost:8000/api/v1/docs
+- Flower 监控：http://localhost:5555
+- MinIO 控制台：http://localhost:9001 (minioadmin/minioadmin)
+
+详细说明请查看 [Docker 部署文档](docs/docker.md)
+
+### 方式二：本地开发部署
+
 1. **安装系统依赖**：确保主机已安装 `LibreOffice (soffice)`、`Inkscape`、`FFmpeg`，并提供可执行二进制到 `PATH`。
 2. **创建虚拟环境并安装 Python 依赖**
     ```bash

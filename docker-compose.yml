@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  # Redis - Celery Broker & Result Backend
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-network
+
+  # MinIO - Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: rag-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rag-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+      - "9091:9091"
+    environment:
+      - RAG_CONFIG_FILE=/app/config/settings.yaml
+      - RAG_celery__broker_url=redis://redis:6379/0
+      - RAG_celery__result_backend=redis://redis:6379/1
+      - RAG_minio__endpoint=http://minio:9000
+      - RAG_minio__access_key=minioadmin
+      - RAG_minio__secret_key=minioadmin
+    volumes:
+      - ./config:/app/config
+      - ./secrets:/app/secrets
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: uvicorn rag_converter.app:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rag-network
+
+  # Celery Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-worker
+    ports:
+      - "9092:9092"
+    environment:
+      - RAG_CONFIG_FILE=/app/config/settings.yaml
+      - RAG_celery__broker_url=redis://redis:6379/0
+      - RAG_celery__result_backend=redis://redis:6379/1
+      - RAG_minio__endpoint=http://minio:9000
+      - RAG_minio__access_key=minioadmin
+      - RAG_minio__secret_key=minioadmin
+    volumes:
+      - ./config:/app/config
+      - ./secrets:/app/secrets
+      - ./logs:/app/logs
+      - worker-temp:/tmp/rag_converter
+    depends_on:
+      - redis
+      - minio
+    command: celery -A rag_converter.celery_app:celery_app worker --loglevel=info --concurrency=4
+    networks:
+      - rag-network
+
+  # Flower - Celery Monitoring
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - worker
+    command: celery -A rag_converter.celery_app:celery_app flower --port=5555
+    networks:
+      - rag-network
+
+volumes:
+  redis-data:
+  minio-data:
+  worker-temp:
+
+networks:
+  rag-network:
+    driver: bridge
