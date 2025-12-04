@@ -1,0 +1,110 @@
+service_name: "rag-conversion-engine"
+environment: "dev"
+api_version: "v1"
+base_url: "/api/v1"
+
+file_limits:
+  default_max_size_mb: 100
+  per_format_max_size_mb:
+    doc: 50
+    ppt: 60
+    gif: 30
+    svg: 10
+    webp: 15
+    wav: 200
+    flac: 300
+    ogg: 150
+    aac: 100
+    avi: 500
+    mov: 500
+    mkv: 800
+    webm: 400
+    mpeg: 400
+  max_total_upload_size_mb: 500
+  max_files_per_task: 10
+
+logging:
+  level: "INFO"
+  log_dir: "./logs"
+  rotation: "size"
+  max_log_file_size_mb: 100
+  backup_count: 7
+  retention_days: 30
+
+monitoring:
+  health_api: "/api/v1/monitor/health"
+  traffic_api: "/api/v1/monitor/traffic"
+  queue_api: "/api/v1/monitor/queue"
+  dependencies_api: "/api/v1/monitor/dependencies"
+  prometheus_port: 9091
+  metrics_interval_sec: 15
+
+minio:
+  endpoint: "http://minio:9000"
+  access_key: "your_access_key"
+  secret_key: "your_secret_key"
+  bucket: "qadata"
+  timeout: 30
+
+convert_formats:
+  - source: "doc"
+    target: "docx"
+    plugin: "doc-to-docx"
+  - source: "svg"
+    target: "png"
+    plugin: "svg-to-png"
+  - source: "gif"
+    target: "mp4"
+    plugin: "gif-to-mp4"
+  - source: "webp"
+    target: "png"
+    plugin: "webp-to-png"
+  - source: "wav"
+    target: "mp3"
+    plugin: "wav-to-mp3"
+  - source: "flac"
+    target: "mp3"
+    plugin: "flac-to-mp3"
+  - source: "ogg"
+    target: "mp3"
+    plugin: "ogg-to-mp3"
+  - source: "aac"
+    target: "mp3"
+    plugin: "aac-to-mp3"
+  - source: "avi"
+    target: "mp4"
+    plugin: "avi-to-mp4"
+  - source: "mov"
+    target: "mp4"
+    plugin: "mov-to-mp4"
+  - source: "mkv"
+    target: "mp4"
+    plugin: "mkv-to-mp4"
+  - source: "webm"
+    target: "mp4"
+    plugin: "webm-to-mp4"
+  - source: "mpeg"
+    target: "mp4"
+    plugin: "mpeg-to-mp4"
+
+plugin_modules_file: "./config/plugins.yaml"
+plugin_modules: []
+plugin_deps_file: "./config/plugins-deps.yaml"
+
+api_auth:
+  required: true
+  app_secrets_path: "./secrets/appkeys.json"
+  header_appid: "X-Appid"
+  header_key: "X-Key"
+
+celery:
+  broker_url: "redis://localhost:6379/0"
+  result_backend: "redis://localhost:6379/1"
+  default_queue: "conversion"
+  task_time_limit_sec: 300
+  prefetch_multiplier: 4
+
+rate_limit:
+  enabled: false
+  interval_sec: 60
+  max_requests: 100
