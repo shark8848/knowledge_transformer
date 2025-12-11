@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -17,10 +19,13 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.logging)
     load_plugins_from_settings(settings)
-    ensure_metrics_server(settings.monitoring.prometheus_port)
+
+    metrics_disabled = os.getenv("RAG_DISABLE_METRICS", "false").lower() in {"1", "true", "yes"}
+    if not metrics_disabled:
+        ensure_metrics_server(settings.monitoring.prometheus_port)
 
     app = FastAPI(
-        title="RAG Document Conversion Engine",
+        title="Knowledge Transformer Engine",
         version=settings.api_version,
         docs_url=f"{settings.base_url}/docs",
         redoc_url=f"{settings.base_url}/redoc",

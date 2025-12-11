@@ -7,6 +7,8 @@ CONFIG_FILE="${RAG_CONFIG_FILE:-$ROOT_DIR/config/settings.yaml}"
 RUN_DIR="$ROOT_DIR/.run"
 API_PORT="${API_PORT:-8000}"
 FLOWER_PORT="${FLOWER_PORT:-5555}"
+TEST_REPORT_PORT="${TEST_REPORT_PORT:-8088}"
+API_DOCS_PORT="${API_DOCS_PORT:-8090}"
 PYTHONPATH="$ROOT_DIR/src"
 export PYTHONPATH
 
@@ -114,7 +116,10 @@ echo "== Process Status =="
 printf "%-18s %s\n" "FastAPI" "$(is_running "$RUN_DIR/api.pid")"
 printf "%-18s %s\n" "Celery" "$(is_running "$RUN_DIR/celery.pid")"
 printf "%-18s %s\n" "Flower" "$(is_running "$RUN_DIR/flower.pid")"
+printf "%-18s %s\n" "TestReport" "$(is_running "$RUN_DIR/test-report.pid")"
+printf "%-18s %s\n" "APIDocs" "$(is_running "$RUN_DIR/api-docs.pid")"
 printf "%-18s %s\n" "FastAPI /healthz" "$(check_http "http://127.0.0.1:${API_PORT}/healthz")"
+printf "%-18s %s\n" "API docs /" "$(check_http "http://127.0.0.1:${API_DOCS_PORT}/")"
 
 PROM_PORT=$("$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
 import sys
@@ -125,6 +130,8 @@ PY
 printf "%-18s %s\n" "API metrics" "http://127.0.0.1:${PROM_PORT}/metrics"
 printf "%-18s %s\n" "Worker metrics" "http://127.0.0.1:$((PROM_PORT + 1))/metrics"
 printf "%-18s %s\n" "Flower UI" "http://127.0.0.1:${FLOWER_PORT}/flower"
+printf "%-18s %s\n" "Test report" "http://127.0.0.1:${TEST_REPORT_PORT}/"
+printf "%-18s %s\n" "API docs" "http://127.0.0.1:${API_DOCS_PORT}/"
 
 echo "\n== External Dependencies =="
 printf "%-18s %s\n" "Redis" "$(check_redis)"

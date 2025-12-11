@@ -1,0 +1,21 @@
+sequenceDiagram
+  participant C as 客户端
+  participant API as API 层
+  participant R as Redis 队列/Result Backend
+  participant W as Celery Worker
+  participant M as 对象存储
+  participant Mon as Flower/Prometheus
+  C->>API: POST /api/v1/convert
+  API-->>C: 202 Accepted + task_id
+  API->>R: 推送 conversion.handle_batch
+  R->>W: 下发任务
+  W->>M: 下载源文件/上传结果
+  W-->>R: 更新结果与状态
+  alt callback_url 设置
+    W->>C: Webhook 通知
+  else 轮询/直连
+    C->>R: 查询状态
+    C->>M: 下载成品
+  end
+  Mon-->>API: 暴露指标
+  Mon-->>W: 任务监控

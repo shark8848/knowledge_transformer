@@ -13,6 +13,8 @@ from .base import ConversionPlugin
 
 DEFAULT_PLUGIN_MODULES: Sequence[str] = (
     "rag_converter.plugins.builtin.doc_to_docx",
+    "rag_converter.plugins.builtin.doc_to_pdf",
+    "rag_converter.plugins.builtin.html_to_pdf",
     "rag_converter.plugins.builtin.svg_to_png",
     "rag_converter.plugins.builtin.gif_to_mp4",
     "rag_converter.plugins.builtin.webp_to_png",

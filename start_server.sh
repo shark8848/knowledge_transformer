@@ -8,8 +8,21 @@ RUN_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
 API_PORT="${API_PORT:-8000}"
 CELERY_LOG_LEVEL="${CELERY_LOG_LEVEL:-info}"
+TEST_REPORT_PORT="${TEST_REPORT_PORT:-8088}"
+TEST_REPORT_HOST="${TEST_REPORT_HOST:-0.0.0.0}"
+TEST_REPORT_PATH="${TEST_REPORT_PATH:-$ROOT_DIR/test-report.html}"
+API_DOCS_PORT="${API_DOCS_PORT:-8090}"
+API_DOCS_HOST="${API_DOCS_HOST:-0.0.0.0}"
+API_DOCS_TITLE="${API_DOCS_TITLE:-Knowledge Transformer API Docs}"
+API_DOCS_CONFIG="${API_DOCS_CONFIG:-$CONFIG_FILE}"
+API_DOCS_ALWAYS_REFRESH="${API_DOCS_ALWAYS_REFRESH:-false}"
+API_DOCS_FAVICON="${API_DOCS_FAVICON:-}"
+API_DOCS_TARGET_URL="${API_DOCS_TARGET_URL:-http://127.0.0.1:${API_PORT}}"
 
-mkdir -p "$RUN_DIR" "$LOG_DIR"
+TEST_ARTIFACTS_DIR_DEFAULT="$ROOT_DIR/tests/artifacts/conversions"
+export RAG_TEST_ARTIFACTS_DIR="${RAG_TEST_ARTIFACTS_DIR:-$TEST_ARTIFACTS_DIR_DEFAULT}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR" "$RAG_TEST_ARTIFACTS_DIR"
 
 FLOWER_PORT="${FLOWER_PORT:-5555}"
 
@@ -22,6 +35,7 @@ require_bin() {
 
 require_bin "$VENV_BIN/uvicorn"
 require_bin "$VENV_BIN/celery"
+require_bin "$VENV_BIN/python"
 
 is_running() {
   local pid_file="$1"
@@ -56,5 +70,15 @@ start_component "Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/celery.log" \
 
 start_component "Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/flower.log" \
   "$VENV_BIN/celery" -A rag_converter.celery_app.celery_app flower --port="$FLOWER_PORT" --url_prefix="/flower"
+
+start_component "TestReport" "$RUN_DIR/test-report.pid" "$LOG_DIR/test-report.log" \
+  env TEST_REPORT_PATH="$TEST_REPORT_PATH" TEST_REPORT_PORT="$TEST_REPORT_PORT" TEST_REPORT_HOST="$TEST_REPORT_HOST" \
+  "$VENV_BIN/python" "$ROOT_DIR/test_report_server.py"
+
+start_component "APIDocs" "$RUN_DIR/api-docs.pid" "$LOG_DIR/api-docs.log" \
+  env API_DOCS_PORT="$API_DOCS_PORT" API_DOCS_HOST="$API_DOCS_HOST" API_DOCS_TITLE="$API_DOCS_TITLE" \
+      API_DOCS_CONFIG="$API_DOCS_CONFIG" API_DOCS_ALWAYS_REFRESH="$API_DOCS_ALWAYS_REFRESH" \
+      API_DOCS_FAVICON="$API_DOCS_FAVICON" API_DOCS_TARGET_URL="$API_DOCS_TARGET_URL" \
+  "$VENV_BIN/python" "$ROOT_DIR/api_docs_server.py"
 
 echo "[start] All components launched. Logs stored in $LOG_DIR"

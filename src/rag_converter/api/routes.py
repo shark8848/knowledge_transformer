@@ -80,9 +80,10 @@ async def submit_conversion(
     message = "Task accepted and scheduled for conversion"
     task_payload = {
         "task_id": task_id,
-        "files": [file.model_dump() for file in payload.files],
+        "files": [file.model_dump(mode="json") for file in payload.files],
         "priority": payload.priority,
-        "callback_url": payload.callback_url,
+        "callback_url": str(payload.callback_url) if payload.callback_url else None,
+        "storage": payload.storage.model_dump(exclude_none=True) if payload.storage else None,
     }
 
     try:

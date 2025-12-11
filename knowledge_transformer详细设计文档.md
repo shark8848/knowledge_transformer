@@ -184,11 +184,11 @@
 
 | 接口/工具 | 输入 | 输出 |
 |-----------|------|------|
-| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `callback_url`, `files[]`（`source_format`, `target_format`, `input_url`/`object_key`, `size_mb`） | `status`, `task_id`, `message` |
+| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `callback_url`, `storage{endpoint,access_key,secret_key,bucket}`（可选），`files[]`（`source_format`, `target_format`, `input_url`/`object_key`/`base64_data`，可选 `filename`，`size_mb`） | `status`, `task_id`, `message` |
 | `GET /api/v1/formats` | Headers: `X-Appid`, `X-Key` | `formats[]`（`source`, `target`, `plugin`） |
 | `GET /api/v1/monitor/health` | Headers: `X-Appid`, `X-Key` | `status`, `timestamp`, `dependencies{redis,object_storage,celery_workers}` |
 | `GET /healthz` | 无 | `{"status":"ok"}` |
-| Celery 任务 `conversion.handle_batch` | `payload = {task_id, files[], priority, callback_url, requested_by}` | `{"task_id":..., "results":[{source,target,status,object_key,output_path,metadata,reason}]}` |
+| Celery 任务 `conversion.handle_batch` | `payload = {task_id, files[], priority, callback_url, storage?, requested_by}` | `{ "task_id":..., "results":[{source,target,status,object_key,output_path,metadata,reason}] }` |
 | Pipeline `submit_conversion_chain` | `files[]`, `priority` | `AsyncResult.id`（转换→质量检查→后处理） |
 | Pipeline `submit_conversion_group` | `file_groups[][]`, `priority` | `task_ids[]`（并行批次） |
 | Pipeline `submit_conversion_chord` | `file_batches[][]`, `priority` | `chord_id`（并行+聚合） |
@@ -227,8 +227,9 @@
 ### 10. 数据存储
 - **缓存与落盘**：
   - Worker 临时目录 `/tmp/rag_converter/<task>`，任务结束清理。
-  - 对象存储 `converted/{task_id}/...` 长期存储，遵循 bucket 生命周期或人工清理。
+  - 对象存储 `converted/{task_id}/...` 长期存储，遵循 bucket 生命周期或人工清理；若未提供自定义对象存储地址/凭证则使用缺省 `endpoint=http://localhost:9000`、`access_key=minioadmin`、`secret_key=minioadmin`、`bucket=qadata`。
   - Redis Result Backend 配置过期时间，控制历史任务保留周期。
+  - API 请求可在 payload 中透传 `storage.endpoint/access_key/secret_key/bucket` 覆盖单次任务的对象存储目标。
 - **环境约束**：Docker/K8s/裸机均可，需保证 CPU、内存与磁盘资源。
 
 ### 11. 配置设计
@@ -239,7 +240,7 @@
   | `file_limits` | `default_max_size_mb`, `per_format_max_size_mb`, `max_files_per_task` | 控制单文件/总批次大小与数量上限。 |
   | `logging` | `level`, `log_dir`, `max_log_file_size_mb`, `backup_count` | 日志级别、目录与滚动策略。 |
   | `monitoring` | `prometheus_port`, `metrics_interval_sec`, `health_api` 等 | 指标端口、采样周期、健康检查路径。 |
-  | `minio` | `endpoint`, `access_key`, `bucket`, `timeout` | 对象存储连接配置。 |
+  | `minio` | `endpoint`, `access_key`, `secret_key`, `bucket`, `timeout` | 对象存储连接配置；未覆盖时默认 `http://localhost:9000` / `minioadmin` / `minioadmin` / `qadata`。 |
   | `convert_formats` | `source`, `target`, `plugin` | 受支持的格式映射及默认插件。 |
   | `api_auth` | `required`, `app_secrets_path`, `header_appid` | API 鉴权开关与凭证路径。 |
   | `celery` | `broker_url`, `result_backend`, `task_time_limit_sec`, `prefetch_multiplier` | 任务调度与执行限制。 |
@@ -302,6 +303,8 @@
   | 文件名 | 源格式 → 目标格式 | 大小 (MB) | 用途 |
   |--------|-------------------|-----------|------|
   | `doc_sample_small.doc` | `doc → docx` | 0.05 | 最小文件验证（极小文件处理 + Pipeline Chain）。 |
+  | `doc_sample_pdf.doc` | `doc → pdf` | 0.05 | 文档直转 PDF，验证 soffice 输出。 |
+  | `html_inline_base64.json` | `html(base64) → pdf` | 0.01 | 富文本内联（base64_data）到 PDF 的链路验证。 |
   | `ppt_marketing.ppt` | `ppt → pdf` | 48 | 常规文档转换，验证多页结构。 |
   | `svg_logo.svg` | `svg → png` | 0.8 | 图像/矢量流程 + Pipeline Group。 |
   | `gif_banner.gif` | `gif → mp4` | 25 | 动图转视频，检查对象存储上传与回调。 |
@@ -328,6 +331,8 @@
   | UT-09 | Pipeline | Group + Result Backend | Mock `AsyncResult` | 三个任务 | `len(task_ids)=3`，分别返回 `SUCCESS/FAILURE` 状态。 |
   | UT-10 | 监控 | 依赖检查 | Mock Redis/MinIO/Celery Ping | Redis down | 返回 `{"redis":"error:RedisError"...}`，`QUEUE_DEPTH`=NaN。 |
   | UT-11 | 基础设施 | Logging 配置 | Mock `structlog.configure` | `level=DEBUG`, `log_dir=./logs` | 生成 `logs/service.log`，console+file handler 正常。 |
+  | UT-12 | Worker | base64 内联输入 | Mock/真实 MinIO | `base64_data + filename`，`html→pdf` | 任务成功，生成 PDF，`object_key`/本地工件存在，状态 `success`。 |
+  | UT-13 | Worker | 对象存储覆盖 | Mock MinIO 客户端 | `storage.endpoint/access_key/secret_key/bucket` 覆盖 + `object_key` 下载 | `_get_minio_client` 使用非缓存配置，下载/上传均指向覆盖的 bucket/endpoint。 |
 - **优化/边界/异常覆盖**：
   - **性能优化**：在 UT-01/UT-07 基础上增加高并发模拟（pytest-xdist + Celery test worker），观察 `queue_depth` 与 `prefetch_multiplier` 对吞吐的影响。
   - **边界值**：针对 `file_limits`（最小 1KB、最大 500MB）、批次数（1 与上限 10）以及优先级（low/high）设置独立用例，确保阈值附近行为符合预期。

@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant API as API 层
+    participant Q as Redis 队列/Result Backend
+    participant W as Celery Worker
+    participant P as 转换插件
+    participant S as 对象存储
+    participant CB as 回调客户端
+    API->>API: 校验输入并生成 task_id
+    API->>Q: 封装 conversion.handle_batch
+    Q-->>W: 下发任务
+    W->>S: 下载源文件或外部 URL
+    W->>P: 调用插件执行转换
+    P-->>W: 返回转换产物
+    W->>S: 上传至 converted/task_id/ 目录
+    W->>API: 记录 results[]
+    alt callback_url 已配置
+        API->>CB: 触发 Webhook 通知
+    else 未配置
+        API-->>API: 等待客户端自行查询
+    end

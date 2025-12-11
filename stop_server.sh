@@ -25,5 +25,7 @@ stop_component() {
 stop_component "FastAPI" "$RUN_DIR/api.pid"
 stop_component "Celery" "$RUN_DIR/celery.pid"
 stop_component "Flower" "$RUN_DIR/flower.pid"
+stop_component "TestReport" "$RUN_DIR/test-report.pid"
+stop_component "APIDocs" "$RUN_DIR/api-docs.pid"
 
 echo "[stop] Shutdown sequence completed."

@@ -1,0 +1,6 @@
+flowchart LR
+  A[解析输入<br/>SVG/EPS/PDF] --> B[预处理<br/>裁剪/缩放/背景]
+  B --> C[渲染导出<br/>PNG/JPEG/WebP]
+  C --> D[记录元数据<br/>分辨率/体积]
+  D --> E[上传对象存储<br/>converted/task_id/]
+  E --> F[清理临时目录]

@@ -48,6 +48,43 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 
 默认 `api_auth.required=true`，调用所有业务接口前需在 `secrets/appkeys.json` 中存在有效的 `appid/key` 组合，并通过 `X-Appid`、`X-Key` 或 URL 参数携带。可通过 `make_key.sh`（或 `make keys`）快速查看/管理密钥。
 
+## 测试与报告
+
+1. **运行完整测试并生成 HTML 报告**
+    ```bash
+    /home/knowledge_transformer/.venv/bin/python -m pytest \
+      --html=test-report.html --self-contained-html
+    ```
+    以上命令会在仓库根目录输出 `test-report.html`，包含所有用例的通过/失败记录。
+2. **启动测试报告服务器**
+    ```bash
+    TEST_REPORT_PATH=./test-report.html \
+    TEST_REPORT_PORT=8088 \
+    /home/knowledge_transformer/.venv/bin/python test_report_server.py
+    ```
+    - `TEST_REPORT_PATH`：可选，指定要发布的 HTML 报告路径，默认指向仓库根目录的 `test-report.html`。
+    - `TEST_REPORT_PORT`：可选，默认为 `8088`。
+    - 访问 `http://localhost:8088/` 可直接在线查看报告，`/download` 路径可下载原始 HTML 文件，`/healthz` 用于状态探测。
+
+3. **启动 API 文档服务（Swagger/OpenAPI）**
+        ```bash
+        API_DOCS_PORT=8090 \
+        API_DOCS_CONFIG=./config/settings.yaml \
+        /home/knowledge_transformer/.venv/bin/python api_docs_server.py
+        ```
+        - 服务会直接从 FastAPI 应用生成最新的 OpenAPI Schema，并通过 Swagger UI / ReDoc 对外展示。
+        - 页面路径：`http://localhost:8090/`（Swagger UI），`http://localhost:8090/redoc`（ReDoc），原始 Schema：`/openapi.json`。
+        - Swagger UI 中点击 “Try it out / Execute” 时，会把请求发送到 `API_DOCS_TARGET_URL`（默认 `http://127.0.0.1:8000`），可根据部署拓扑覆盖为对外地址；`API_DOCS_ALWAYS_REFRESH=true` 可强制每次请求前重建 Schema，`API_DOCS_TITLE`、`API_DOCS_FAVICON` 可自定义页面样式。
+
+`test_report_server.py` 与 `api_docs_server.py` 均基于 FastAPI/uvicorn，可单独运行，也会在执行 `start_server.sh` 时自动随主服务一同拉起，对应的状态可通过 `show_server.sh` 查看，`stop_server.sh` 会统一关闭。
+
+4. **示例 API 测试脚本（HTML→PDF，内联 base64）**
+    ```bash
+    ./scripts/test_pdf_conversion.py
+    ```
+    - 默认请求 `http://127.0.0.1:8000/api/v1/convert`，使用 repo 内的 appid/key（可用 `API_URL`、`API_APPID`、`API_KEY` 覆盖）。
+    - 发送 base64 编码的 HTML 富文本，目标 `pdf`，验证新增的 `html-to-pdf` 插件链路与 `base64_data` 入参。
+
 ## 技术栈
 
 - **语言**：Python 3.11+
@@ -173,12 +210,28 @@ Content-Type: application/json
 | `task_name` | string | ✓ | 任务名称，便于追踪 |
 | `priority` | string | ✗ | 优先级：`low`/`normal`/`high`，默认 `normal` |
 | `callback_url` | string | ✗ | 转换完成后的 webhook 回调 URL |
+| `storage` | object | ✗ | 对象存储覆盖信息；未提供时使用服务端缺省配置 |
 | `files` | array | ✓ | 待转换文件列表 |
 | `files[].source_format` | string | ✓ | 源格式，如 `doc`、`svg`、`wav` |
 | `files[].target_format` | string | ✓ | 目标格式，如 `docx`、`png`、`mp3` |
-| `files[].input_url` | string | ✗ | 文件下载 URL（与 `object_key` 二选一） |
-| `files[].object_key` | string | ✗ | 对象存储键名（与 `input_url` 二选一） |
+| `files[].input_url` | string | ✗ | 文件下载 URL（与 `object_key`、`base64_data` 三选一） |
+| `files[].object_key` | string | ✗ | 对象存储键名（与 `input_url`、`base64_data` 三选一） |
+| `files[].base64_data` | string (base64) | ✗ | 内联内容（富文本/二进制）base64 字符串，便于直接传输小文件 |
+| `files[].filename` | string | ✗ | 与 `base64_data` 搭配的文件名（未填则根据 `source_format` 推断扩展名） |
 | `files[].size_mb` | number | ✓ | 文件大小（MB），用于预检验证 |
+
+**可选对象存储覆盖：**
+
+```json
+"storage": {
+    "endpoint": "http://minio:9000",
+    "access_key": "your-ak",
+    "secret_key": "your-sk",
+    "bucket": "custom-bucket"
+}
+```
+
+不传 `storage` 字段时，服务端使用缺省配置（示例：`endpoint=http://localhost:9000`，`access_key=minioadmin`，`secret_key=minioadmin`，`bucket=qadata`）。
 
 **响应示例（成功）：**
 ```json
@@ -214,9 +267,10 @@ Content-Type: application/json
 转换完成后，系统通过以下方式提供文件访问：
 
 1. **对象存储（推荐方式）**
-   - 转换后的文件自动上传到 MinIO/S3 对象存储
-   - 存储路径格式：`converted/{task_id}/{filename}`
-   - 示例：`converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx`
+    - 转换后的文件自动上传到 MinIO/S3 对象存储，目标桶/凭证由配置 `minio.{endpoint,access_key,secret_key,bucket}` 决定
+    - 存储路径格式：`converted/{task_id}/{filename}`
+    - 示例：`converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx`
+    - 如未显式提供对象存储地址与凭证，使用缺省配置：`endpoint=http://localhost:9000`，`access_key=minioadmin`，`secret_key=minioadmin`，`bucket=qadata`
 
 2. **Webhook 回调**
    - 如果提交任务时指定了 `callback_url`，转换完成后会 POST 结果到该 URL
@@ -408,6 +462,8 @@ X-Key: your-app-key
 {
   "formats": [
     {"source": "doc", "target": "docx", "plugin": "doc-to-docx"},
+        {"source": "doc", "target": "pdf", "plugin": "doc-to-pdf"},
+        {"source": "html", "target": "pdf", "plugin": "html-to-pdf"},
     {"source": "svg", "target": "png", "plugin": "svg-to-png"},
     {"source": "gif", "target": "mp4", "plugin": "gif-to-mp4"},
     {"source": "webp", "target": "png", "plugin": "webp-to-png"},
@@ -434,6 +490,24 @@ X-Key: your-app-key
 | `formats[].plugin` | string | 插件标识符 |
 
 ---
+
+**内联富文本/小文件示例（HTML → PDF，经 base64 传输）**
+
+```json
+{
+    "task_name": "html-to-pdf-inline",
+    "priority": "normal",
+    "files": [
+        {
+            "base64_data": "PGgxPkhlbGxvPC9oMT4=",
+            "source_format": "html",
+            "target_format": "pdf",
+            "filename": "inline.html",
+            "size_mb": 0.001
+        }
+    ]
+}
+```
 
 ### 3. GET /api/v1/monitor/health - 健康检查
 

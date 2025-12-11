@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import errno
 import logging
 import os
 import shutil
+from binascii import Error as BinasciiError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from uuid import uuid4
 
-from celery import Celery
+from celery import Celery, signals
 from minio import Minio
 
 from .config import Settings, get_settings
@@ -40,7 +43,19 @@ celery_app = _create_celery(SETTINGS)
 _worker_metrics_started = False
 WORK_DIR = Path(os.getenv("RAG_WORK_DIR", "/tmp/rag_converter"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
+_TEST_ARTIFACTS_DIR_ENV = os.getenv("RAG_TEST_ARTIFACTS_DIR")
+TEST_ARTIFACTS_DIR = Path(_TEST_ARTIFACTS_DIR_ENV).expanduser() if _TEST_ARTIFACTS_DIR_ENV else None
 _MINIO_CLIENT: Optional[Minio] = None
+
+
+def _apply_storage_override(settings: Settings, override: Optional[Dict[str, Any]]) -> Settings:
+    if not override:
+        return settings
+
+    merged_minio = settings.minio.model_copy(
+        update={k: v for k, v in override.items() if v is not None}
+    )
+    return settings.model_copy(update={"minio": merged_minio})
 
 
 def _build_minio_client(settings: Settings) -> Minio:
@@ -55,11 +70,15 @@ def _build_minio_client(settings: Settings) -> Minio:
     )
 
 
-def _get_minio_client(settings: Settings) -> Minio:
+def _get_minio_client(settings: Settings, *, use_cache: bool = True) -> Minio:
     global _MINIO_CLIENT
-    if _MINIO_CLIENT is None:
-        _MINIO_CLIENT = _build_minio_client(settings)
-    return _MINIO_CLIENT
+    if use_cache and _MINIO_CLIENT is not None:
+        return _MINIO_CLIENT
+
+    client = _build_minio_client(settings)
+    if use_cache:
+        _MINIO_CLIENT = client
+    return client
 
 
 def _workspace_file(filename: str) -> Path:
@@ -67,7 +86,25 @@ def _workspace_file(filename: str) -> Path:
     return WORK_DIR / f"{uuid4().hex}_{filename}"
 
 
-def _materialize_input(file_meta: Dict[str, Any], settings: Settings) -> Path:
+def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache: bool = True) -> Path:
+    if file_meta.get("base64_data"):
+        raw_b64: str = file_meta["base64_data"]
+        try:
+            decoded = base64.b64decode(raw_b64, validate=True)
+        except (BinasciiError, ValueError) as exc:
+            raise ValueError("Invalid base64_data payload") from exc
+
+        filename = file_meta.get("filename")
+        if not filename:
+            src_fmt = (file_meta.get("source_format") or "").split("/")[-1]
+            extension = src_fmt or "bin"
+            filename = f"inline.{extension}"
+
+        dest = _workspace_file(filename)
+        with dest.open("wb") as handle:
+            handle.write(decoded)
+        return dest
+
     if file_meta.get("local_path"):
         path = Path(file_meta["local_path"])
         if not path.exists():
@@ -77,7 +114,7 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings) -> Path:
     if object_key := file_meta.get("object_key"):
         filename = Path(object_key).name or f"input_{uuid4().hex}"
         dest = _workspace_file(filename)
-        client = _get_minio_client(settings)
+        client = _get_minio_client(settings, use_cache=use_cache)
         client.fget_object(settings.minio.bucket, object_key, str(dest))
         return dest
 
@@ -92,21 +129,72 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings) -> Path:
     raise ValueError("No input source provided (object_key or input_url required)")
 
 
-def _upload_output(path: Path | None, settings: Settings, task_id: str | None) -> Optional[str]:
+def _upload_output(
+    path: Path | None, settings: Settings, task_id: str | None, use_cache: bool = True
+) -> Optional[str]:
     if not path or not Path(path).exists():
         return None
     object_key = f"converted/{task_id or uuid4().hex}/{Path(path).name}"
-    client = _get_minio_client(settings)
+    client = _get_minio_client(settings, use_cache=use_cache)
     client.fput_object(settings.minio.bucket, object_key, str(path))
     return object_key
 
 
+def _store_test_artifact(path: Path | None, task_id: str | None) -> None:
+    """Persist conversion output into a shared tests directory when configured."""
+
+    if not path:
+        return
+
+    target_path = Path(path)
+    if not target_path.exists():
+        return
+
+    global TEST_ARTIFACTS_DIR
+    artifact_dir = TEST_ARTIFACTS_DIR
+    if not artifact_dir:
+        env_dir = os.getenv("RAG_TEST_ARTIFACTS_DIR")
+        if not env_dir:
+            return
+        artifact_dir = Path(env_dir).expanduser()
+        TEST_ARTIFACTS_DIR = artifact_dir
+
+    try:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        dest_name = f"{task_id}_{target_path.name}" if task_id else target_path.name
+        shutil.copy2(target_path, artifact_dir / dest_name)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("Unable to persist test artifact", exc_info=exc)
+
+
+def _ensure_worker_metrics_started() -> None:
+    """Start worker-side metrics exactly once per process."""
+
+    global _worker_metrics_started
+    if _worker_metrics_started:
+        return
+
+    try:
+        ensure_metrics_server(SETTINGS.monitoring.prometheus_port + 1)
+    except OSError as exc:  # pragma: no cover - defensive on prefork workers
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        logger.debug("Worker metrics server already running", exc_info=exc)
+    _worker_metrics_started = True
+
+
+@signals.worker_ready.connect
+def _on_worker_ready(sender=None, **kwargs):  # type: ignore[override]
+    _ensure_worker_metrics_started()
+
+
 @celery_app.task(name="conversion.handle_batch")
 def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
-    global _worker_metrics_started
-    if not _worker_metrics_started:
-        ensure_metrics_server(SETTINGS.monitoring.prometheus_port + 1)
-        _worker_metrics_started = True
+    _ensure_worker_metrics_started()
+
+    storage_override = payload.get("storage")
+    task_settings = _apply_storage_override(SETTINGS, storage_override)
+    use_cache = not bool(storage_override)
 
     task_id = payload.get("task_id")
     files: List[Dict[str, Any]] = payload.get("files", [])
@@ -131,7 +219,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         try:
-            input_path = _materialize_input(file_meta, SETTINGS)
+            input_path = _materialize_input(file_meta, task_settings, use_cache=use_cache)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Failed to prepare input for %s -> %s", source, target)
             record_task_completed("failed")
@@ -159,9 +247,13 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             output_object = result.object_key
             if not output_object:
                 try:
-                    output_object = _upload_output(output_path, SETTINGS, task_id)
+                    output_object = _upload_output(
+                        output_path, task_settings, task_id, use_cache=use_cache
+                    )
                 except Exception as upload_exc:  # pragma: no cover - defensive logging
                     logger.exception("Failed to upload output for %s -> %s", source, target)
+
+            _store_test_artifact(output_path, task_id)
 
             results.append(
                 {
