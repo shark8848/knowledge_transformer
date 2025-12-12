@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -54,14 +54,29 @@ class ConversionRequest(BaseModel):
         None,
         description="Optional object storage overrides; falls back to server defaults when absent",
     )
+    mode: Literal["async", "sync"] = Field(
+        "async",
+        description="Execution mode: async (default) enqueues Celery task, sync runs inline and returns result immediately",
+    )
+
+
+class ConversionResultPayload(BaseModel):
+    source: str
+    target: str
+    status: str
+    output_path: str | None = None
+    object_key: str | None = None
+    metadata: dict[str, Any] | None = None
+    reason: str | None = None
 
 
 class ConversionResponse(BaseModel):
-    status: Literal["accepted", "failure"]
+    status: Literal["accepted", "failure", "success"]
     task_id: str | None = None
     message: str | None = None
     error_code: str | None = None
     error_status: int | None = None
+    results: List[ConversionResultPayload] | None = None
 
 
 class HealthResponse(BaseModel):

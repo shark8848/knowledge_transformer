@@ -225,6 +225,7 @@ Content-Type: application/json
 |-----|------|-----|------|
 | `task_name` | string | ✓ | 任务名称，便于追踪 |
 | `priority` | string | ✗ | 优先级：`low`/`normal`/`high`，默认 `normal` |
+| `mode` | string | ✗ | 执行模式：`async`（默认，入队返回 202）或 `sync`（同步执行并直接返回结果，建议单文件小体积） |
 | `callback_url` | string | ✗ | 转换完成后的 webhook 回调 URL |
 | `storage` | object | ✗ | 对象存储覆盖信息；未提供时使用服务端缺省配置 |
 | `files` | array | ✓ | 待转换文件列表 |
@@ -240,6 +241,8 @@ Content-Type: application/json
 
 `page_limit` 与 `duration_seconds` 互斥：仅文档格式接受 `page_limit`，仅音视频/动图接受 `duration_seconds`。文档类会在生成 PDF 后裁剪前 N 页，音视频通过 FFmpeg `-t` 从 0 秒截取指定时长。
 
+> 同步模式说明：`mode=sync` 仅支持单文件、小体积场景（建议 <20MB），不建议携带 `callback_url`。执行超时将直接返回错误，避免阻塞 API 线程。
+
 **可选对象存储覆盖：**
 
 ```json
@@ -253,12 +256,30 @@ Content-Type: application/json
 
 不传 `storage` 字段时，服务端使用缺省配置（示例：`endpoint=http://localhost:9000`，`access_key=minioadmin`，`secret_key=minioadmin`，`bucket=qadata`）。
 
-**响应示例（成功）：**
+**响应示例（成功，异步入队）：**
 ```json
 {
   "status": "accepted",
   "task_id": "a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f",
   "message": "Task accepted and scheduled for conversion"
+}
+```
+
+**响应示例（成功，同步模式）：**
+```json
+{
+    "status": "success",
+    "task_id": "4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111",
+    "message": "Task completed synchronously",
+    "results": [
+        {
+            "source": "docx",
+            "target": "pdf",
+            "status": "success",
+            "object_key": "converted/4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111/report.pdf",
+            "metadata": {"note": "Converted via LibreOffice soffice"}
+        }
+    ]
 }
 ```
 
@@ -272,11 +293,13 @@ Content-Type: application/json
 }
 ```
 
+不在可转换清单内时，错误响应会包含源文件定位信息（如 `input_url`/`object_key`/`filename`），便于快速排查：`"message": "Unsupported format doc->mp4 (source=https://...)"`。
+
 **响应字段：**
 
 | 字段 | 类型 | 说明 |
 |-----|------|------|
-| `status` | string | `accepted`（已接受）或 `failure`（失败） |
+| `status` | string | `accepted`（异步已入队） / `success`（同步模式直接完成） / `failure`（失败） |
 | `task_id` | string | 任务唯一标识符，用于后续查询 |
 | `message` | string | 描述信息 |
 | `error_code` | string | 错误码（失败时），详见 `docs/error_codes.md` |

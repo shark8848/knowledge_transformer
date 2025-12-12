@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
+from typing import Any
 
 from fastapi import APIRouter, Depends, status
 from celery.exceptions import CeleryError
+from fastapi.responses import JSONResponse
 
 from ..config import Settings, settings_dependency
 from ..errors import raise_error
 from ..security import authenticate_request
-from ..celery_app import celery_app, handle_conversion_task
+from ..celery_app import (
+    _apply_storage_override,
+    _materialize_input,
+    _upload_output,
+    celery_app,
+    handle_conversion_task,
+)
 from ..plugins import REGISTRY
+from ..plugins.base import ConversionInput
 from ..monitoring import collect_dependency_status, record_task_accepted
 from .schemas import (
     ConversionRequest,
     ConversionResponse,
+    ConversionResultPayload,
     FormatDescriptor,
     FormatsResponse,
     HealthResponse,
@@ -32,12 +43,20 @@ def _per_format_limit(settings: Settings, fmt: str) -> int:
     return limits.per_format_max_size_mb.get(fmt, limits.default_max_size_mb)
 
 
+def _source_locator(file: Any) -> str:
+    return file.input_url or file.object_key or file.filename or f"inline.{file.source_format}"
+
+
 def _validate_request(payload: ConversionRequest, settings: Settings) -> None:
     limits = settings.file_limits
     files = payload.files
+    mode = payload.mode.lower() if payload.mode else "async"
 
     if not files:
         raise_error("ERR_FORMAT_UNSUPPORTED")
+
+    if mode == "sync" and len(files) > 1:
+        raise_error("ERR_BATCH_LIMIT_EXCEEDED", detail="sync mode only supports a single file")
 
     if len(files) > limits.max_files_per_task:
         raise_error("ERR_BATCH_LIMIT_EXCEEDED")
@@ -79,18 +98,95 @@ def _validate_request(payload: ConversionRequest, settings: Settings) -> None:
         if file.size_mb > per_limit:
             raise_error("ERR_FILE_TOO_LARGE")
         if (fmt, file.target_format.lower()) not in supported:
-            raise_error("ERR_FORMAT_UNSUPPORTED")
+            locator = _source_locator(file)
+            raise_error(
+                "ERR_FORMAT_UNSUPPORTED",
+                detail=f"Unsupported format {fmt}->{file.target_format.lower()} (source={locator})",
+            )
 
         if file.page_limit is not None and file.duration_seconds is not None:
             raise_error("ERR_FORMAT_UNSUPPORTED")
 
         if file.page_limit is not None:
             if fmt not in doc_formats:
-                raise_error("ERR_FORMAT_UNSUPPORTED")
+                locator = _source_locator(file)
+                raise_error(
+                    "ERR_FORMAT_UNSUPPORTED",
+                    detail=f"page_limit only allowed for doc formats (source={locator})",
+                )
 
         if file.duration_seconds is not None:
             if fmt not in av_formats:
-                raise_error("ERR_FORMAT_UNSUPPORTED")
+                locator = _source_locator(file)
+                raise_error(
+                    "ERR_FORMAT_UNSUPPORTED",
+                    detail=f"duration_seconds only allowed for audio/video formats (source={locator})",
+                )
+
+
+def _run_sync_conversion(payload: ConversionRequest, settings: Settings) -> ConversionResponse:
+    file_meta = payload.files[0].model_dump(mode="json")
+    storage_override = payload.storage.model_dump(exclude_none=True) if payload.storage else None
+    task_settings = _apply_storage_override(settings, storage_override)
+    use_cache = not bool(storage_override)
+    task_id = str(uuid4())
+
+    source = file_meta.get("source_format")
+    target = file_meta.get("target_format")
+    try:
+        plugin = REGISTRY.get(source, target)
+    except KeyError:
+        locator = _source_locator(payload.files[0])
+        raise_error(
+            "ERR_FORMAT_UNSUPPORTED",
+            detail=f"Unsupported format {source}->{target} (source={locator})",
+        )
+
+    try:
+        input_path = _materialize_input(file_meta, task_settings, use_cache=use_cache)
+    except Exception as exc:  # pragma: no cover - defensive
+        raise_error("ERR_TASK_FAILED", detail=str(exc))
+
+    conversion_input = ConversionInput(
+        source_format=source,
+        target_format=target,
+        input_path=input_path,
+        input_url=file_meta.get("input_url"),
+        object_key=file_meta.get("object_key"),
+        metadata={
+            "requested_by": None,
+            "page_limit": file_meta.get("page_limit"),
+            "duration_seconds": file_meta.get("duration_seconds"),
+        },
+    )
+    try:
+        result = plugin.convert(conversion_input)
+    except Exception as exc:  # pragma: no cover - defensive
+        raise_error("ERR_TASK_FAILED", detail=str(exc))
+
+    output_path = Path(result.output_path) if result.output_path else None
+    output_object = result.object_key
+    if not output_object:
+        try:
+            output_object = _upload_output(output_path, task_settings, task_id, use_cache=use_cache)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise_error("ERR_TASK_FAILED", detail=f"Upload failed: {exc}")
+
+    conv_result = ConversionResultPayload(
+        source=source,
+        target=target,
+        status="success",
+        output_path=str(output_path) if output_path else None,
+        object_key=output_object,
+        metadata=result.metadata,
+    )
+
+    return ConversionResponse(
+        status="success",
+        task_id=task_id,
+        message="Task completed synchronously",
+        results=[conv_result],
+    )
 
 
 @router.post(
@@ -104,6 +200,10 @@ async def submit_conversion(
     settings: Settings = Depends(settings_dependency),
 ) -> ConversionResponse:
     _validate_request(payload, settings)
+
+    if payload.mode == "sync":
+        response = _run_sync_conversion(payload, settings)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=response.model_dump())
 
     task_id = str(uuid4())
     message = "Task accepted and scheduled for conversion"
