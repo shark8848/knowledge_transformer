@@ -44,6 +44,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - PLUGIN_DEPS_FILE=./config/plugins-deps.yaml
     container_name: rag-api
     ports:
       - "8000:8000"
@@ -78,6 +80,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - PLUGIN_DEPS_FILE=./config/plugins-deps.yaml
     container_name: rag-worker
     ports:
       - "9092:9092"
@@ -105,6 +109,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - PLUGIN_DEPS_FILE=./config/plugins-deps.yaml
     container_name: rag-flower
     ports:
       - "5555:5555"

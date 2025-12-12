@@ -3,20 +3,33 @@ FROM python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # LibreOffice for doc->docx conversion
-    libreoffice \
-    libreoffice-writer \
-    # Inkscape for svg->png conversion
-    inkscape \
-    # FFmpeg for multimedia conversions
-    ffmpeg \
-    # 其他工具
-    curl \
-    wget \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# 预先复制插件依赖声明，便于构建期自动安装
+ARG PLUGIN_DEPS_FILE=/tmp/plugins-deps.yaml
+COPY config/plugins-deps.yaml ${PLUGIN_DEPS_FILE}
+
+# 安装系统依赖（包含插件声明的外部依赖）
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends python3-yaml; \
+    BASE_PACKAGES="curl wget"; \
+    PLUGIN_PACKAGES="$(python3 - <<'PY'
+import yaml, pathlib
+path = pathlib.Path("${PLUGIN_DEPS_FILE}")
+pkgs: list[str] = []
+if path.exists():
+    data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+    deps = data.get('dependencies', {}) or {}
+    for items in deps.values():
+        if items:
+            pkgs.extend(items)
+pkgs = sorted(set(pkgs))
+print(' '.join(pkgs))
+PY
+)"; \
+    INSTALL_PACKAGES="$BASE_PACKAGES $PLUGIN_PACKAGES"; \
+    apt-get install -y --no-install-recommends ${INSTALL_PACKAGES}; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 # 复制项目文件
 COPY pyproject.toml ./
