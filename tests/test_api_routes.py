@@ -97,11 +97,28 @@ def test_validate_request_rejects_batch_limit(test_settings):
 
 
 def test_validate_request_rejects_unsupported_format(test_settings):
-    files = [_make_file(source_format="ppt", target_format="pptx")]
+    files = [
+        _make_file(
+            source_format="ppt",
+            target_format="pptx",
+            input_url=None,
+            object_key="objects/ppt.ppt",
+        )
+    ]
     payload = _make_request(files=files)
     with pytest.raises(HTTPException) as exc:
         _validate_request(payload, test_settings)
     assert exc.value.detail["error_code"] == "ERR_FORMAT_UNSUPPORTED"
+    assert "source=objects/ppt.ppt" in exc.value.detail["message"]
+
+
+def test_validate_request_sync_rejects_multiple_files(test_settings):
+    files = [_make_file(), _make_file(object_key="obj2.doc")]
+    payload = _make_request(files=files, mode="sync")
+    with pytest.raises(HTTPException) as exc:
+        _validate_request(payload, test_settings)
+    assert exc.value.detail["error_code"] == "ERR_BATCH_LIMIT_EXCEEDED"
+    assert "sync mode only supports a single file" in exc.value.detail["message"]
 
 
 def test_submit_conversion_queues_task(api_client, mock_celery, fixed_uuid):
@@ -151,6 +168,56 @@ def test_submit_conversion_passes_storage_override(api_client, mock_celery, fixe
     assert response.status_code == 202
     queued = mock_celery[0]["storage"]
     assert queued == payload["storage"]
+
+
+def test_submit_conversion_sync_mode_runs_inline(api_client, monkeypatch):
+    calls = {}
+
+    def fake_materialize(file_meta, settings, use_cache):
+        calls["materialized"] = file_meta
+        return "/tmp/input.doc"
+
+    class _Plugin:
+        def convert(self, conv_input):
+            calls["conversion_input"] = conv_input
+
+            class _Result:
+                output_path = None
+                object_key = "outputs/demo.docx"
+                metadata = {"pages": 1}
+
+            return _Result()
+
+    monkeypatch.setattr("rag_converter.api.routes._materialize_input", fake_materialize)
+    monkeypatch.setattr("rag_converter.api.routes.REGISTRY.get", lambda s, t: _Plugin())
+    monkeypatch.setattr(
+        "rag_converter.api.routes._upload_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not upload")),
+    )
+
+    response = api_client.post(
+        "/convert",
+        json={
+            "task_name": "demo",
+            "mode": "sync",
+            "files": [
+                {
+                    "source_format": "doc",
+                    "target_format": "docx",
+                    "size_mb": 10,
+                    "input_url": "https://example.com/input.doc",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["message"] == "Task completed synchronously"
+    assert body["results"][0]["object_key"] == "outputs/demo.docx"
+    assert calls["materialized"]["input_url"] == "https://example.com/input.doc"
+    assert calls["conversion_input"].source_format == "doc"
 
 
 def test_submit_conversion_handles_celery_failure(api_client, monkeypatch):
