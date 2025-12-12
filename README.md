@@ -1074,7 +1074,7 @@ except ImportError:
     from celery_config import pipeline_celery   # 直接运行模式
 
 class CeleryConverterClient:
-    """通过 Celery 编排直接调用转换引擎任务"""
+    """通过 Celery 编排直接调用转换引擎任务，构造与 API 校验一致的 payload"""
     
     def __init__(self):
         # 引用转换引擎容器中注册的任务
@@ -1082,106 +1082,99 @@ class CeleryConverterClient:
             'conversion.handle_batch',  # 转换引擎注册的任务名
             app=pipeline_celery
         )
+
+    def _build_payload(
+        self,
+        files: List[Dict],
+        *,
+        priority: str = "normal",
+        callback_url: str | None = None,
+        storage: Dict | None = None,
+        requested_by: str = "pipeline-service"
+    ) -> Dict:
+        return {
+            "task_id": str(uuid.uuid4()),
+            "files": files,
+            "priority": priority,
+            "callback_url": callback_url,
+            "storage": storage,
+            "requested_by": requested_by,
+        }
     
     def submit_conversion_chain(
         self,
         files: List[Dict],
-        priority: str = "normal"
+        priority: str = "normal",
+        *,
+        callback_url: str | None = None,
+        storage: Dict | None = None,
     ) -> str:
-        """
-        使用 Celery Chain 串行编排任务
+        """使用 Celery Chain 串行编排：转换 -> 质量检查 -> 后处理"""
+
+        conversion_payload = self._build_payload(
+            files,
+            priority=priority,
+            callback_url=callback_url,
+            storage=storage,
+        )
         
-        流程：文档转换 -> 质量检查 -> 后处理
-        """
-        task_id = str(uuid.uuid4())
-        
-        # 构建转换任务参数
-        conversion_payload = {
-            "task_id": task_id,
-            "files": files,
-            "priority": priority,
-            "requested_by": "pipeline-service"
-        }
-        
-        # Celery Chain：串行执行多个任务
         workflow = chain(
-            # 步骤1：格式转换（调用转换引擎的任务）
             self.conversion_task.clone(args=[conversion_payload]),
-            
-            # 步骤2：质量检查（Pipeline 自己的任务）
             pipeline_celery.signature('pipeline.quality_check'),
-            
-            # 步骤3：后处理（Pipeline 自己的任务）
             pipeline_celery.signature('pipeline.post_process')
         )
         
-        # 提交 Chain 到队列
         result = workflow.apply_async(priority=self._priority_to_int(priority))
-        
         return result.id
     
     def submit_conversion_group(
         self,
         file_groups: List[List[Dict]],
-        priority: str = "normal"
+        priority: str = "normal",
+        *,
+        callback_url: str | None = None,
+        storage: Dict | None = None,
     ) -> List[str]:
-        """
-        使用 Celery Group 并行编排多个转换任务
-        
-        场景：多个独立批次同时转换
-        """
+        """使用 Celery Group 并行编排多个转换任务"""
+
         tasks = []
-        
         for files in file_groups:
-            task_id = str(uuid.uuid4())
-            payload = {
-                "task_id": task_id,
-                "files": files,
-                "priority": priority,
-                "requested_by": "pipeline-service"
-            }
-            tasks.append(
-                self.conversion_task.clone(args=[payload])
+            payload = self._build_payload(
+                files,
+                priority=priority,
+                callback_url=callback_url,
+                storage=storage,
             )
+            tasks.append(self.conversion_task.clone(args=[payload]))
         
-        # Celery Group：并行执行多个任务
         job = group(tasks)
         result = job.apply_async(priority=self._priority_to_int(priority))
-        
         return [r.id for r in result.results]
     
     def submit_conversion_chord(
         self,
         file_batches: List[List[Dict]],
-        priority: str = "high"
+        priority: str = "high",
+        *,
+        callback_url: str | None = None,
+        storage: Dict | None = None,
     ) -> str:
-        """
-        使用 Celery Chord 编排：并行转换 + 聚合处理
-        
-        流程：
-        1. 多个批次并行转换（Group）
-        2. 等待全部完成后执行聚合任务（Callback）
-        """
-        # 并行任务组
+        """使用 Celery Chord：并行转换 + 聚合处理"""
+
         parallel_tasks = []
         for files in file_batches:
-            task_id = str(uuid.uuid4())
-            payload = {
-                "task_id": task_id,
-                "files": files,
-                "priority": priority,
-                "requested_by": "pipeline-service"
-            }
-            parallel_tasks.append(
-                self.conversion_task.clone(args=[payload])
+            payload = self._build_payload(
+                files,
+                priority=priority,
+                callback_url=callback_url,
+                storage=storage,
             )
+            parallel_tasks.append(self.conversion_task.clone(args=[payload]))
         
-        # Chord：并行任务 + 回调
         workflow = chord(
-            group(parallel_tasks),  # 并行执行转换
-            pipeline_celery.signature('pipeline.aggregate_results')  # 聚合结果
+            group(parallel_tasks),
+            pipeline_celery.signature('pipeline.aggregate_results')
         )
-        
         result = workflow.apply_async(priority=self._priority_to_int(priority))
         return result.id
     
@@ -1206,9 +1199,8 @@ class CeleryConverterClient:
         return priority_map.get(priority, 5)
 
 
-# 使用示例1：Chain 串行编排
+# 使用示例1：Chain 串行编排（含 page_limit/duration/storage/callback）
 def example_chain_workflow():
-    """串行工作流：转换 -> 质量检查 -> 后处理"""
     client = CeleryConverterClient()
     
     files = [
@@ -1216,64 +1208,70 @@ def example_chain_workflow():
             "source_format": "doc",
             "target_format": "docx",
             "object_key": "uploads/report.doc",
-            "size_mb": 2.5
+            "filename": "report.doc",
+            "size_mb": 2.5,
+            "page_limit": 3
         },
         {
-            "source_format": "svg",
-            "target_format": "png",
-            "object_key": "uploads/diagram.svg",
-            "size_mb": 0.8
+            "source_format": "wav",
+            "target_format": "mp3",
+            "object_key": "uploads/interview.wav",
+            "size_mb": 45.0,
+            "duration_seconds": 20
         }
     ]
     
-    # 提交 Chain 工作流
-    task_id = client.submit_conversion_chain(files, priority="high")
-    print(f"Chain workflow submitted: {task_id}")
+    storage_override = {
+        "endpoint": "http://minio:9000",
+        "access_key": "override-ak",
+        "secret_key": "override-sk",
+        "bucket": "custom-bucket"
+    }
     
-    # 等待完成
+    task_id = client.submit_conversion_chain(
+        files,
+        priority="high",
+        callback_url="http://pipeline-processor:9000/webhook/conversion",
+        storage=storage_override,
+    )
+    print(f"Chain workflow submitted: {task_id}")
     result = client.get_result(task_id, timeout=600)
     print(f"Workflow completed: {result}")
 
 
-# 使用示例2：Group 并行编排
+# 使用示例2：Group 并行编排（多批次 + 元数据）
 def example_group_workflow():
-    """并行工作流：同时处理多个批次"""
     client = CeleryConverterClient()
-    
-    # 三个批次并行转换
     file_groups = [
-        [{"source_format": "doc", "target_format": "docx", "object_key": "batch1/file1.doc", "size_mb": 2.0}],
-        [{"source_format": "svg", "target_format": "png", "object_key": "batch2/file2.svg", "size_mb": 1.5}],
-        [{"source_format": "wav", "target_format": "mp3", "object_key": "batch3/audio.wav", "size_mb": 50.0}]
+        [{"source_format": "doc", "target_format": "docx", "object_key": "batch1/file1.doc", "filename": "file1.doc", "size_mb": 2.0, "page_limit": 2}],
+        [{"source_format": "svg", "target_format": "png", "input_url": "https://example.com/file2.svg", "size_mb": 1.5}],
+        [{"source_format": "wav", "target_format": "mp3", "object_key": "batch3/audio.wav", "size_mb": 50.0, "duration_seconds": 15}]
     ]
-    
-    # 提交 Group 并行任务
-    task_ids = client.submit_conversion_group(file_groups, priority="normal")
+    task_ids = client.submit_conversion_group(
+        file_groups,
+        priority="normal",
+        callback_url="http://pipeline-processor:9000/webhook/conversion"
+    )
     print(f"Group tasks submitted: {task_ids}")
-    
-    # 检查各批次状态
     for task_id in task_ids:
         status = client.check_status(task_id)
         print(f"Task {task_id}: {status}")
 
 
-# 使用示例3：Chord 并行+聚合编排
+# 使用示例3：Chord 并行+聚合（混合 page_limit/duration）
 def example_chord_workflow():
-    """Chord 工作流：并行转换 + 统一聚合"""
     client = CeleryConverterClient()
-    
-    # 多个批次
     file_batches = [
-        [{"source_format": "doc", "target_format": "docx", "object_key": "project/doc1.doc", "size_mb": 2.0}],
-        [{"source_format": "doc", "target_format": "docx", "object_key": "project/doc2.doc", "size_mb": 3.0}],
-        [{"source_format": "svg", "target_format": "png", "object_key": "project/img.svg", "size_mb": 1.0}]
+        [{"source_format": "doc", "target_format": "docx", "object_key": "project/doc1.doc", "size_mb": 2.0, "page_limit": 2}],
+        [{"source_format": "pptx", "target_format": "pdf", "object_key": "project/slides.pptx", "size_mb": 10.0, "page_limit": 5}],
+        [{"source_format": "gif", "target_format": "mp4", "object_key": "project/anim.gif", "size_mb": 5.0, "duration_seconds": 5}]
     ]
-    
-    # 提交 Chord：并行转换后聚合
-    chord_id = client.submit_conversion_chord(file_batches, priority="high")
+    chord_id = client.submit_conversion_chord(
+        file_batches,
+        priority="high",
+        storage={"bucket": "converted-overrides"}
+    )
     print(f"Chord workflow submitted: {chord_id}")
-    
-    # 等待聚合结果
     aggregated_result = client.get_result(chord_id, timeout=600)
     print(f"Aggregated result: {aggregated_result}")
 ```
