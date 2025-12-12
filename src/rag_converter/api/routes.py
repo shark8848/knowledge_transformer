@@ -55,6 +55,24 @@ def _validate_request(payload: ConversionRequest, settings: Settings) -> None:
         for f in settings.convert_formats
     }
     supported = registry_pairs or configured_pairs
+
+    doc_formats = {"doc", "docx", "ppt", "pptx", "html"}
+    av_formats = {
+        "wav",
+        "flac",
+        "ogg",
+        "aac",
+        "avi",
+        "mov",
+        "mkv",
+        "webm",
+        "mpeg",
+        "gif",
+        "flv",
+        "ts",
+        "m4v",
+        "3gp",
+    }
     for file in files:
         fmt = file.source_format.lower()
         per_limit = _per_format_limit(settings, fmt)
@@ -62,6 +80,17 @@ def _validate_request(payload: ConversionRequest, settings: Settings) -> None:
             raise_error("ERR_FILE_TOO_LARGE")
         if (fmt, file.target_format.lower()) not in supported:
             raise_error("ERR_FORMAT_UNSUPPORTED")
+
+        if file.page_limit is not None and file.duration_seconds is not None:
+            raise_error("ERR_FORMAT_UNSUPPORTED")
+
+        if file.page_limit is not None:
+            if fmt not in doc_formats:
+                raise_error("ERR_FORMAT_UNSUPPORTED")
+
+        if file.duration_seconds is not None:
+            if fmt not in av_formats:
+                raise_error("ERR_FORMAT_UNSUPPORTED")
 
 
 @router.post(

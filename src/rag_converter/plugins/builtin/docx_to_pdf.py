@@ -1,4 +1,4 @@
-"""Plugin that uses LibreOffice to convert doc -> pdf."""
+"""Plugin that uses LibreOffice to convert docx -> pdf."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from ..registry import REGISTRY
 from ..utils import trim_pdf_pages
 
 
-class DocToPdfPlugin(ConversionPlugin):
-    slug = "doc-to-pdf"
-    source_format = "doc"
+class DocxToPdfPlugin(ConversionPlugin):
+    slug = "docx-to-pdf"
+    source_format = "docx"
     target_format = "pdf"
 
     def convert(self, payload: ConversionInput) -> ConversionResult:
         if not payload.input_path:
-            raise ValueError("Conversion requires local input_path for doc files")
+            raise ValueError("Conversion requires local input_path for docx files")
 
         input_path = Path(payload.input_path)
         if not input_path.exists():
@@ -54,4 +54,4 @@ class DocToPdfPlugin(ConversionPlugin):
         return ConversionResult(output_path=final_output, metadata=metadata)
 
 
-REGISTRY.register(DocToPdfPlugin)
+REGISTRY.register(DocxToPdfPlugin)

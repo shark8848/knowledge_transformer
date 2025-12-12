@@ -23,18 +23,27 @@ class GifToMp4Plugin(ConversionPlugin):
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
         output_path = input_path.with_suffix(".mp4")
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(input_path),
-            "-movflags",
-            "faststart",
-            "-pix_fmt",
-            "yuv420p",
-            str(output_path),
-        ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(input_path),
+                "-movflags",
+                "faststart",
+                "-pix_fmt",
+                "yuv420p",
+                str(output_path),
+            ]
+            # Support optional duration trimming via payload.metadata['duration_seconds']
+            duration = None
+            if payload.metadata:
+                duration = payload.metadata.get("duration_seconds")
+            if duration:
+                # Insert -t <duration> before the output path (just after input/options)
+                cmd.insert(6, str(duration))
+                cmd.insert(6, "-t")
+
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         metadata = {"note": "Converted via FFmpeg"}
         return ConversionResult(output_path=output_path, metadata=metadata)

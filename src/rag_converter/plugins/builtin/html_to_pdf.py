@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 from ..base import ConversionInput, ConversionPlugin, ConversionResult
 from ..registry import REGISTRY
+from ..utils import trim_pdf_pages
 
 
 class HtmlToPdfPlugin(ConversionPlugin):
@@ -42,6 +43,12 @@ class HtmlToPdfPlugin(ConversionPlugin):
 
             final_output = input_path.with_suffix(".pdf")
             output_candidate.replace(final_output)
+
+        page_limit = None
+        if payload.metadata:
+            page_limit = payload.metadata.get("page_limit")
+        if page_limit:
+            trim_pdf_pages(final_output, int(page_limit))
 
         metadata = {"note": "Converted via LibreOffice soffice"}
         return ConversionResult(output_path=final_output, metadata=metadata)

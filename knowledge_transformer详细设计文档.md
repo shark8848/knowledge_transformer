@@ -1,6 +1,5 @@
 # knowledge_transformer 详细设计文档
 
-
 ## 文档规范化转换服务引擎
 
 ### 1. 设计原则
@@ -9,8 +8,9 @@
 2. **资源与安全限制**：按格式与全局定义文件大小/批量上限，API 层使用 appid/key 鉴权，支持 CLI 管理。
 3. **错误码体系**：集中式错误码映射 HTTP 状态与业务状态，支持多语言描述，方便排障与对接（详见文末《附录：错误码总览》）。
 4. **插件化架构**：转换逻辑以插件形式装配，可运行时发现新插件并快速扩展支持的格式。
-5. **可观测性**：结构化日志、Tracing ID、Prometheus 指标、Flower 监控以及健康检查接口，提升可运维性。
-6. **异步高并发处理**：所有任务通过 Celery 执行，提供 Webhook、Result Backend、对象存储下载、预签名 URL 等多种结果获取方式，显著降低 API 阻塞。
+5. **细粒度转换控制**：文档格式支持 `page_limit` 截断 PDF 页数；音视频支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
+6. **可观测性**：结构化日志、Tracing ID、Prometheus 指标、Flower 监控以及健康检查接口，提升可运维性。
+7. **异步高并发处理**：所有任务通过 Celery 执行，提供 Webhook、Result Backend、对象存储下载、预签名 URL 等多种结果获取方式，显著降低 API 阻塞。
 
 ### 2. 实现描述
 文档规范化转换服务引擎核心功能为实现覆盖 Office、矢量图、音视频等多种常见格式的转换服务。提供 REST API 与 Celery 异步任务双通道能力。FastAPI 接收文档转换请求并立即返回 `task_id`，Celery 异步调度任务，Worker 通过插件体系（LibreOffice / Inkscape / FFmpeg 等）执行转换。结果统一存储在对象存储服务器中，消费端可通过 Result Backend 轮询、Webhook 回调或直接访问对象存储获取文件。Celery Pipeline 可以直接调用 Celery 任务，利用 Chain/Group/Chord 等编排方式实现串行、并行及聚合流程。
@@ -32,6 +32,7 @@
         W->>S: 下载源文件或外部 URL
         W->>P: 调用插件执行转换
         P-->>W: 返回转换产物
+
         W->>S: 上传至 converted/task_id/ 目录
         W->>API: 记录 results[]
         alt callback_url 已配置
@@ -131,7 +132,7 @@
       D --> E[上传对象存储<br/>converted/task_id/]
       E --> F[清理临时目录]
     ```
-  - 音视频：FFmpeg 提供模板化参数集，按 `source_format`/`target_profile` 选择不同 Preset（帧率、比特率、采样率、编码器）。调用链路先拼装基础指令，再叠加业务侧自定义滤镜（如裁剪、降噪、字幕）或压缩策略（CRF、ABR、两遍编码）。任务执行时会根据文件长度动态估算超时时间，并在失败后回退到保守参数或转码降级方案。
+  - 音视频：FFmpeg 提供模板化参数集，按 `source_format`/`target_profile` 选择不同 Preset（帧率、比特率、采样率、编码器），可透传 `duration_seconds` 以 `-t` 截断输出时长。调用链路先拼装基础指令，再叠加业务侧自定义滤镜（如裁剪、降噪、字幕）或压缩策略（CRF、ABR、两遍编码）。任务执行时会根据文件长度动态估算超时时间，并在失败后回退到保守参数或转码降级方案。
     - **场景样例**：
       1. `webm→mp4`：高码率直播回放转 MP4，使用 x264 Baseline + CRF 23，附带音轨统一到 AAC 128kbps。
       2. `wav→mp3`：语音识别前的批量降采样，固定 16kHz/单声道，并在滤镜中追加噪声抑制。
@@ -184,7 +185,7 @@
 
 | 接口/工具 | 输入 | 输出 |
 |-----------|------|------|
-| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `callback_url`, `storage{endpoint,access_key,secret_key,bucket}`（可选），`files[]`（`source_format`, `target_format`, `input_url`/`object_key`/`base64_data`，可选 `filename`，`size_mb`） | `status`, `task_id`, `message` |
+| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `callback_url`, `storage{endpoint,access_key,secret_key,bucket}`（可选），`files[]`（`source_format`, `target_format`, `input_url`/`object_key`/`base64_data`，可选 `filename`，`size_mb`，可选 `page_limit` 或 `duration_seconds` 二选一） | `status`, `task_id`, `message` |
 | `GET /api/v1/formats` | Headers: `X-Appid`, `X-Key` | `formats[]`（`source`, `target`, `plugin`） |
 | `GET /api/v1/monitor/health` | Headers: `X-Appid`, `X-Key` | `status`, `timestamp`, `dependencies{redis,object_storage,celery_workers}` |
 | `GET /healthz` | 无 | `{"status":"ok"}` |
@@ -194,6 +195,7 @@
 | Pipeline `submit_conversion_chord` | `file_batches[][]`, `priority` | `chord_id`（并行+聚合） |
 
 
+`page_limit` 仅适用于 `doc/docx/html/ppt/pptx`，生成 PDF 后保留前 N 页；`duration_seconds` 仅适用于音视频/动图（`wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif`），两者互斥。
 
 ### 7. 容错设计
 - **内部容错**：
@@ -217,11 +219,11 @@
 
 | 源格式 | 目标格式 | 插件/工具栈 | 典型场景 |
 |--------|-----------|--------------|-----------|
-| `doc`, `docx`, `ppt`, `xls` | `docx`, `pdf`, `html` | LibreOffice `soffice` 插件 | 办公文档标准化、合同归档、文本抽取。 |
+| `doc`, `docx`, `ppt`, `pptx`, `html` | `docx`, `pdf`, `html` | LibreOffice `soffice` 插件 | 办公文档标准化、合同归档、文本抽取，支持 `page_limit` 裁剪 PDF 页数。 |
 | `svg`, `eps`, `pdf` | `png`, `jpeg`, `webp` | Inkscape CLI | 产品图/流程图渲染、批量图标输出。 |
-| `gif`, `webp` | `png`, `mp4` | GIF/WebP 插件 + FFmpeg | 动图转静帧、营销素材转视频。 |
-| `wav`, `flac`, `ogg`, `aac` | `mp3` | FFmpeg Audio 插件 | 语音识别预处理、播客压缩。 |
-| `avi`, `mov`, `mkv`, `webm`, `mpeg` | `mp4` | FFmpeg Video 插件 | 跨平台视频播放、长视频归档。 |
+| `gif`, `webp` | `png`, `mp4` | GIF/WebP 插件 + FFmpeg | 动图转静帧、营销素材转视频，可作为视频源接受 `duration_seconds`。 |
+| `wav`, `flac`, `ogg`, `aac` | `mp3` | FFmpeg Audio 插件 | 语音识别预处理、播客压缩，支持 `duration_seconds` 裁剪。 |
+| `avi`, `mov`, `mkv`, `webm`, `mpeg`, `flv`, `ts`, `m4v`, `3gp` | `mp4` | FFmpeg Video 插件 | 跨平台视频播放、长视频归档，支持 `duration_seconds` 裁剪。 |
 | 自定义格式 | 自定义输出 | 第三方/自研插件 | 按需扩展，例如 CAD→PDF、AI→SVG 等。 |
 
 ### 10. 数据存储
@@ -303,9 +305,11 @@
   | 文件名 | 源格式 → 目标格式 | 大小 (MB) | 用途 |
   |--------|-------------------|-----------|------|
   | `doc_sample_small.doc` | `doc → docx` | 0.05 | 最小文件验证（极小文件处理 + Pipeline Chain）。 |
-  | `doc_sample_pdf.doc` | `doc → pdf` | 0.05 | 文档直转 PDF，验证 soffice 输出。 |
+  | `doc_sample_pdf.doc` | `doc → pdf` | 0.05 | 文档直转 PDF，验证 soffice 输出及 `page_limit=5` 截断。 |
+  | `docx_sample.docx` | `docx → pdf` | 0.1 | DOCX 转 PDF（含 `page_limit` 截断与内联 base64 上传）。 |
   | `html_inline_base64.json` | `html(base64) → pdf` | 0.01 | 富文本内联（base64_data）到 PDF 的链路验证。 |
-  | `ppt_marketing.ppt` | `ppt → pdf` | 48 | 常规文档转换，验证多页结构。 |
+  | `ppt_marketing.ppt` | `ppt → pdf` | 48 | 常规文档转换，验证多页结构与 `page_limit`。 |
+  | `pptx_demo.pptx` | `pptx → pdf` | 20 | PPTX 转 PDF，覆盖页数截断与 LibreOffice 过滤。 |
   | `svg_logo.svg` | `svg → png` | 0.8 | 图像/矢量流程 + Pipeline Group。 |
   | `gif_banner.gif` | `gif → mp4` | 25 | 动图转视频，检查对象存储上传与回调。 |
   | `webp_large.webp` | `webp → png` | 15 | 静态图较大文件，用于对象存储异常注入。 |
@@ -333,6 +337,8 @@
   | UT-11 | 基础设施 | Logging 配置 | Mock `structlog.configure` | `level=DEBUG`, `log_dir=./logs` | 生成 `logs/service.log`，console+file handler 正常。 |
   | UT-12 | Worker | base64 内联输入 | Mock/真实 MinIO | `base64_data + filename`，`html→pdf` | 任务成功，生成 PDF，`object_key`/本地工件存在，状态 `success`。 |
   | UT-13 | Worker | 对象存储覆盖 | Mock MinIO 客户端 | `storage.endpoint/access_key/secret_key/bucket` 覆盖 + `object_key` 下载 | `_get_minio_client` 使用非缓存配置，下载/上传均指向覆盖的 bucket/endpoint。 |
+  | UT-14 | 压测 | 并发混合转换 | 真实 API + ThreadPool | svg→png、wav→mp3、gif→mp4 各 10 条并发 | 30/30 成功；p50≈0.024s，p95≈0.292s，max≈0.295s（并发 10）。 |
+  | UT-14 | Worker | DOCX→PDF 插件 | Mock `soffice` 命令 | `docx(base64) → pdf` | 生成 `.pdf` 输出文件，metadata 含 `LibreOffice soffice`，对象存储上传成功。 |
 - **优化/边界/异常覆盖**：
   - **性能优化**：在 UT-01/UT-07 基础上增加高并发模拟（pytest-xdist + Celery test worker），观察 `queue_depth` 与 `prefetch_multiplier` 对吞吐的影响。
   - **边界值**：针对 `file_limits`（最小 1KB、最大 500MB）、批次数（1 与上限 10）以及优先级（low/high）设置独立用例，确保阈值附近行为符合预期。

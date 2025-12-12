@@ -23,7 +23,8 @@ dependencies = [
     "python-multipart>=0.0.7",
     "aiofiles>=23.2",
     "structlog>=23.1",
-    "orjson>=3.9"
+    "orjson>=3.9",
+    "pypdf>=4.3",
 ]
 
 [project.optional-dependencies]

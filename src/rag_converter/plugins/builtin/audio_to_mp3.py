@@ -22,6 +22,10 @@ class _BaseAudioToMp3Plugin(ConversionPlugin):
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
         output_path = input_path.with_suffix(".mp3")
+        duration = None
+        if payload.metadata:
+            duration = payload.metadata.get("duration_seconds")
+
         cmd = [
             "ffmpeg",
             "-y",
@@ -31,6 +35,9 @@ class _BaseAudioToMp3Plugin(ConversionPlugin):
             "2",
             str(output_path),
         ]
+        if duration:
+            cmd.insert(6, str(duration))
+            cmd.insert(6, "-t")
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         metadata = {"note": f"Converted {self.source_format}->mp3 via FFmpeg"}

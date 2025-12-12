@@ -78,12 +78,27 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 
 `test_report_server.py` 与 `api_docs_server.py` 均基于 FastAPI/uvicorn，可单独运行，也会在执行 `start_server.sh` 时自动随主服务一同拉起，对应的状态可通过 `show_server.sh` 查看，`stop_server.sh` 会统一关闭。
 
-4. **示例 API 测试脚本（HTML→PDF，内联 base64）**
-    ```bash
-    ./scripts/test_pdf_conversion.py
-    ```
-    - 默认请求 `http://127.0.0.1:8000/api/v1/convert`，使用 repo 内的 appid/key（可用 `API_URL`、`API_APPID`、`API_KEY` 覆盖）。
-    - 发送 base64 编码的 HTML 富文本，目标 `pdf`，验证新增的 `html-to-pdf` 插件链路与 `base64_data` 入参。
+4. **示例 API 测试脚本**
+    - HTML→PDF（内联 base64）：
+        ```bash
+        ./scripts/test_pdf_conversion.py
+        ```
+    - 多场景转换套件（HTML base64 → PDF；DOCX base64 → PDF）：
+        ```bash
+        ./scripts/test_conversion_suite.py
+        ```
+        可通过 `DOCX_PATH` 覆盖 DOCX 样例路径；`API_URL`、`API_APPID`、`API_KEY` 覆盖服务地址与凭证。
+    - 文档转换套件（含页数截断验证：doc/docx/pptx → pdf 全量 + `page_limit`=5）：
+        ```bash
+        /home/knowledge_transformer/.venv/bin/python scripts/test_doc_suite.py
+        ```
+        最近一次结果：39/39 成功（含页数裁剪用例）。
+    - 并发混合转换压测（支持 `PAGE_LIMIT` 页数裁剪，覆盖 html/doc/docx/ppt/pptx、svg→png、wav→mp3、gif→mp4 等）：
+        ```bash
+        PAGE_LIMIT=5 ./scripts/test_concurrent_conversions.py  # 可用 CONCURRENCY、API_URL 等覆盖
+        ```
+        最近一次在 `PAGE_LIMIT=5` 下通过（并发示例 10）。
+    - 所有脚本默认请求 `http://127.0.0.1:8000/api/v1/convert`，使用仓库内 appid/key。
 
 ## 技术栈
 
@@ -129,8 +144,9 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 2. **资源与安全限制**：按格式与全局的大小/批量上限，API 默认使用 `appid+key` 认证，可通过 CLI 管理密钥。
 3. **错误码体系**：集中式错误码注册（多语言），自动映射 HTTP 状态与业务状态码。
 4. **插件化架构**：转换逻辑与格式能力以插件形式装配，支持运行时发现与动态扩展。
-5. **可观测性**：结构化日志、追踪 ID、Prometheus 指标以及健康/依赖监控端点。
-6. **异步任务处理**：所有转换任务通过 Celery 异步执行，FastAPI 负责接收请求和返回 task_id，避免长时间阻塞连接。支持 webhook 回调、Result Backend 查询等多种结果获取方式。
+5. **细粒度转换控制**：文档类（doc/docx/html/ppt/pptx）支持 `page_limit` 截断 PDF 页数，音视频类支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
+6. **可观测性**：结构化日志、追踪 ID、Prometheus 指标以及健康/依赖监控端点。
+7. **异步任务处理**：所有转换任务通过 Celery 异步执行，FastAPI 负责接收请求和返回 task_id，避免长时间阻塞连接。支持 webhook 回调、Result Backend 查询等多种结果获取方式。
 
 ## API 接口详细说明
 
@@ -219,6 +235,10 @@ Content-Type: application/json
 | `files[].base64_data` | string (base64) | ✗ | 内联内容（富文本/二进制）base64 字符串，便于直接传输小文件 |
 | `files[].filename` | string | ✗ | 与 `base64_data` 搭配的文件名（未填则根据 `source_format` 推断扩展名） |
 | `files[].size_mb` | number | ✓ | 文件大小（MB），用于预检验证 |
+| `files[].page_limit` | number | ✗ | 文档类可选：限制转换到 PDF 的页数（从第 1 页开始），适用于 `doc/docx/html/ppt/pptx` |
+| `files[].duration_seconds` | number | ✗ | 音/视频可选：裁剪转换时长（秒，t=0 起），适用于 `wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif` |
+
+`page_limit` 与 `duration_seconds` 互斥：仅文档格式接受 `page_limit`，仅音视频/动图接受 `duration_seconds`。文档类会在生成 PDF 后裁剪前 N 页，音视频通过 FFmpeg `-t` 从 0 秒截取指定时长。
 
 **可选对象存储覆盖：**
 
@@ -461,21 +481,28 @@ X-Key: your-app-key
 ```json
 {
   "formats": [
-    {"source": "doc", "target": "docx", "plugin": "doc-to-docx"},
+        {"source": "doc", "target": "docx", "plugin": "doc-to-docx"},
         {"source": "doc", "target": "pdf", "plugin": "doc-to-pdf"},
+        {"source": "docx", "target": "pdf", "plugin": "docx-to-pdf"},
+        {"source": "ppt", "target": "pdf", "plugin": "ppt-to-pdf"},
+        {"source": "pptx", "target": "pdf", "plugin": "pptx-to-pdf"},
         {"source": "html", "target": "pdf", "plugin": "html-to-pdf"},
-    {"source": "svg", "target": "png", "plugin": "svg-to-png"},
-    {"source": "gif", "target": "mp4", "plugin": "gif-to-mp4"},
-    {"source": "webp", "target": "png", "plugin": "webp-to-png"},
-    {"source": "wav", "target": "mp3", "plugin": "wav-to-mp3"},
-    {"source": "flac", "target": "mp3", "plugin": "flac-to-mp3"},
-    {"source": "ogg", "target": "mp3", "plugin": "ogg-to-mp3"},
-    {"source": "aac", "target": "mp3", "plugin": "aac-to-mp3"},
-    {"source": "avi", "target": "mp4", "plugin": "avi-to-mp4"},
-    {"source": "mov", "target": "mp4", "plugin": "mov-to-mp4"},
-    {"source": "mkv", "target": "mp4", "plugin": "mkv-to-mp4"},
-    {"source": "webm", "target": "mp4", "plugin": "webm-to-mp4"},
-    {"source": "mpeg", "target": "mp4", "plugin": "mpeg-to-mp4"}
+        {"source": "svg", "target": "png", "plugin": "svg-to-png"},
+        {"source": "gif", "target": "mp4", "plugin": "gif-to-mp4"},
+        {"source": "webp", "target": "png", "plugin": "webp-to-png"},
+        {"source": "wav", "target": "mp3", "plugin": "wav-to-mp3"},
+        {"source": "flac", "target": "mp3", "plugin": "flac-to-mp3"},
+        {"source": "ogg", "target": "mp3", "plugin": "ogg-to-mp3"},
+        {"source": "aac", "target": "mp3", "plugin": "aac-to-mp3"},
+        {"source": "avi", "target": "mp4", "plugin": "avi-to-mp4"},
+        {"source": "mov", "target": "mp4", "plugin": "mov-to-mp4"},
+        {"source": "mkv", "target": "mp4", "plugin": "mkv-to-mp4"},
+        {"source": "webm", "target": "mp4", "plugin": "webm-to-mp4"},
+        {"source": "mpeg", "target": "mp4", "plugin": "mpeg-to-mp4"},
+        {"source": "flv", "target": "mp4", "plugin": "flv-to-mp4"},
+        {"source": "ts", "target": "mp4", "plugin": "ts-to-mp4"},
+        {"source": "m4v", "target": "mp4", "plugin": "m4v-to-mp4"},
+        {"source": "3gp", "target": "mp4", "plugin": "3gp-to-mp4"}
   ]
 }
 ```

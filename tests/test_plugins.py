@@ -9,6 +9,7 @@ import yaml
 
 from rag_converter.plugins.base import ConversionInput, ConversionPlugin, ConversionResult
 from rag_converter.plugins.builtin.svg_to_png import SvgToPngPlugin
+from rag_converter.plugins.builtin.docx_to_pdf import DocxToPdfPlugin
 from rag_converter.plugins.registry import (
     PluginRegistry,
     load_plugins,
@@ -102,3 +103,28 @@ def test_svg_to_png_plugin_converts_image(tmp_path, monkeypatch):
 
     assert result.output_path == output_file
     assert result.metadata == {"note": "Converted via Inkscape CLI"}
+
+
+def test_docx_to_pdf_plugin_invokes_soffice(tmp_path, monkeypatch):
+    input_file = tmp_path / "sample.docx"
+    input_file.write_bytes(b"fake-docx")
+
+    def fake_run(cmd, check, stdout, stderr):  # pragma: no cover - patched behavior
+        outdir = Path(cmd[cmd.index("--outdir") + 1])
+        src = Path(cmd[-1])
+        (outdir / (src.stem + ".pdf")).write_bytes(b"pdf")
+
+    monkeypatch.setattr("rag_converter.plugins.builtin.docx_to_pdf.subprocess.run", fake_run)
+
+    plugin = DocxToPdfPlugin()
+    result = plugin.convert(
+        ConversionInput(
+            source_format="docx",
+            target_format="pdf",
+            input_path=input_file,
+        )
+    )
+
+    assert result.output_path == input_file.with_suffix(".pdf")
+    assert Path(result.output_path).exists()
+    assert result.metadata == {"note": "Converted via LibreOffice soffice"}

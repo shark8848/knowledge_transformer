@@ -21,6 +21,16 @@ class ConversionFile(BaseModel):
         description="Optional filename used when persisting inline/base64 content; extension inferred from source_format if omitted",
     )
     size_mb: float = Field(..., ge=0.0, description="Reported file size in megabytes")
+    page_limit: int | None = Field(
+        None,
+        ge=1,
+        description="Optional: for document formats, number of pages to convert starting from page 1",
+    )
+    duration_seconds: float | None = Field(
+        None,
+        gt=0,
+        description="Optional: for audio/video formats, duration (seconds) to convert starting from t=0",
+    )
 
 
 class StorageOverride(BaseModel):

@@ -239,7 +239,11 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             input_path=input_path,
             input_url=file_meta.get("input_url"),
             object_key=file_meta.get("object_key"),
-            metadata={"requested_by": payload.get("requested_by")},
+            metadata={
+                "requested_by": payload.get("requested_by"),
+                "page_limit": file_meta.get("page_limit"),
+                "duration_seconds": file_meta.get("duration_seconds"),
+            },
         )
         try:
             result = plugin.convert(conversion_input)

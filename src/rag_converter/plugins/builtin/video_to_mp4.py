@@ -21,6 +21,9 @@ class _BaseVideoToMp4Plugin(ConversionPlugin):
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
         output_path = input_path.with_suffix(".mp4")
+        duration = None
+        if payload.metadata:
+            duration = payload.metadata.get("duration_seconds")
         cmd = [
             "ffmpeg",
             "-y",
@@ -40,6 +43,9 @@ class _BaseVideoToMp4Plugin(ConversionPlugin):
             "faststart",
             str(output_path),
         ]
+        if duration:
+            cmd.insert(6, str(duration))
+            cmd.insert(6, "-t")
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         metadata = {"note": f"Converted {self.source_format}->mp4 via FFmpeg"}
@@ -71,5 +77,35 @@ class MpegToMp4Plugin(_BaseVideoToMp4Plugin):
     source_format = "mpeg"
 
 
-for plugin_cls in (AviToMp4Plugin, MovToMp4Plugin, MkvToMp4Plugin, WebmToMp4Plugin, MpegToMp4Plugin):
+class FlvToMp4Plugin(_BaseVideoToMp4Plugin):
+    slug = "flv-to-mp4"
+    source_format = "flv"
+
+
+class TsToMp4Plugin(_BaseVideoToMp4Plugin):
+    slug = "ts-to-mp4"
+    source_format = "ts"
+
+
+class M4vToMp4Plugin(_BaseVideoToMp4Plugin):
+    slug = "m4v-to-mp4"
+    source_format = "m4v"
+
+
+class ThreeGpToMp4Plugin(_BaseVideoToMp4Plugin):
+    slug = "3gp-to-mp4"
+    source_format = "3gp"
+
+
+for plugin_cls in (
+    AviToMp4Plugin,
+    MovToMp4Plugin,
+    MkvToMp4Plugin,
+    WebmToMp4Plugin,
+    MpegToMp4Plugin,
+    FlvToMp4Plugin,
+    TsToMp4Plugin,
+    M4vToMp4Plugin,
+    ThreeGpToMp4Plugin,
+):
     REGISTRY.register(plugin_cls)

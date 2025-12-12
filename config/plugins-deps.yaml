@@ -1,6 +1,12 @@
 dependencies:
   rag_converter.plugins.builtin.doc_to_docx:
   - libreoffice
+  rag_converter.plugins.builtin.doc_to_pdf:
+  - libreoffice
+  rag_converter.plugins.builtin.docx_to_pdf:
+  - libreoffice
+  rag_converter.plugins.builtin.ppt_to_pdf:
+  - libreoffice
   rag_converter.plugins.builtin.svg_to_png:
   - inkscape
   rag_converter.plugins.builtin.gif_to_mp4:
