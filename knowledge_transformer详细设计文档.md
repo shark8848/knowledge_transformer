@@ -197,6 +197,102 @@
 
 `page_limit` 仅适用于 `doc/docx/html/ppt/pptx`，生成 PDF 后保留前 N 页；`duration_seconds` 仅适用于音视频/动图（`wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif`），两者互斥。`mode` 默认 `async` 返回 202 入队；`sync` 单文件同步执行直接返回结果（建议小体积），超时直接失败。不支持的格式或非法参数会在错误信息中携带源文件定位（`input_url`/`object_key`/`filename`），便于排查。
 
+**API 请求/响应示例（含同步模式与错误源定位）：**
+
+请求：
+```json
+{
+  "task_name": "doc-and-audio",
+  "mode": "sync",
+  "priority": "normal",
+  "files": [
+    {
+      "source_format": "docx",
+      "target_format": "pdf",
+      "input_url": "https://example.com/report.docx",
+      "size_mb": 3.2,
+      "page_limit": 5
+    }
+  ]
+}
+```
+
+响应（同步成功）：
+```json
+{
+  "status": "success",
+  "task_id": "4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111",
+  "message": "Task completed synchronously",
+  "results": [
+    {
+      "source": "docx",
+      "target": "pdf",
+      "status": "success",
+      "object_key": "converted/4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111/report.pdf",
+      "metadata": {"page_limit": 5}
+    }
+  ]
+}
+```
+
+响应（不支持的格式，附带源文件定位）：
+```json
+{
+  "status": "failure",
+  "error_code": "ERR_FORMAT_UNSUPPORTED",
+  "error_status": 400,
+  "message": "Unsupported format doc->mp4 (source=https://example.com/report.doc)"
+}
+```
+
+**Celery 任务报文示例（API 校验后入队的有效负载）：**
+
+请求：
+```json
+{
+  "task_id": "f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11",
+  "priority": "normal",
+  "files": [
+    {
+      "source_format": "docx",
+      "target_format": "pdf",
+      "input_url": "https://example.com/report.docx",
+      "size_mb": 3.2,
+      "page_limit": 5
+    },
+    {
+      "source_format": "wav",
+      "target_format": "mp3",
+      "object_key": "audio/interview.wav",
+      "size_mb": 48.5,
+      "duration_seconds": 30
+    }
+  ]
+}
+```
+
+返回（成功 + 失败混合）：
+```json
+{
+  "task_id": "f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11",
+  "results": [
+    {
+      "source": "docx",
+      "target": "pdf",
+      "status": "success",
+      "object_key": "converted/f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11/report.pdf",
+      "metadata": {"page_limit": 5}
+    },
+    {
+      "source": "wav",
+      "target": "mp3",
+      "status": "failed",
+      "reason": "Input preparation failed (source=audio/interview.wav): FileNotFoundError('...')"
+    }
+  ]
+}
+```
+
 ### 7. 容错设计
 - **内部容错**：
   - 任务级异常捕获（`status=failed` + `reason`）。

@@ -697,6 +697,56 @@ conversion_queue_depth 12
 }
 ```
 
+**示例报文：**
+
+请求（API 已完成校验后写入队列的 payload）：
+```json
+{
+    "task_id": "f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11",
+    "priority": "normal",
+    "callback_url": null,
+    "files": [
+        {
+            "source_format": "docx",
+            "target_format": "pdf",
+            "input_url": "https://example.com/report.docx",
+            "object_key": null,
+            "size_mb": 3.2,
+            "page_limit": 5
+        },
+        {
+            "source_format": "wav",
+            "target_format": "mp3",
+            "object_key": "audio/interview.wav",
+            "size_mb": 48.5,
+            "duration_seconds": 30
+        }
+    ]
+}
+```
+
+返回（成功 + 失败混合示例）：
+```json
+{
+    "task_id": "f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11",
+    "results": [
+        {
+            "source": "docx",
+            "target": "pdf",
+            "status": "success",
+            "object_key": "converted/f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11/report.pdf",
+            "metadata": {"page_limit": 5}
+        },
+        {
+            "source": "wav",
+            "target": "mp3",
+            "status": "failed",
+            "reason": "Input preparation failed (source=audio/interview.wav): FileNotFoundError('...')"
+        }
+    ]
+}
+```
+
 **直接调用示例：**
 
 ```python

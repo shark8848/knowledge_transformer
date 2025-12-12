@@ -86,6 +86,17 @@ def _workspace_file(filename: str) -> Path:
     return WORK_DIR / f"{uuid4().hex}_{filename}"
 
 
+def _source_locator(file_meta: Dict[str, Any]) -> str:
+    """Mirror API-side locator for clearer worker errors without re-validating."""
+
+    return (
+        file_meta.get("input_url")
+        or file_meta.get("object_key")
+        or file_meta.get("filename")
+        or f"inline.{file_meta.get('source_format', 'bin')}"
+    )
+
+
 def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache: bool = True) -> Path:
     if file_meta.get("base64_data"):
         raw_b64: str = file_meta["base64_data"]
@@ -213,7 +224,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "source": source,
                     "target": target,
                     "status": "failed",
-                    "reason": str(exc),
+                    "reason": f"Unsupported format {source}->{target} (source={_source_locator(file_meta)})",
                 }
             )
             continue
@@ -228,7 +239,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "source": source,
                     "target": target,
                     "status": "failed",
-                    "reason": str(exc),
+                    "reason": f"Input preparation failed (source={_source_locator(file_meta)}): {exc}",
                 }
             )
             continue
