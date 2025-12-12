@@ -22,7 +22,8 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 访问地址：
 - API 文档：http://localhost:8000/api/v1/docs
 - Flower 监控：http://localhost:5555
-- MinIO 控制台：http://localhost:9001 (minioadmin/minioadmin)
+            "output_path": null,
+            "metadata": {"note": "Converted via LibreOffice soffice", "page_limit": 5}
 
 详细说明请查看 [Docker 部署文档](docs/docker.md)
 
@@ -192,30 +193,49 @@ Content-Type: application/json
 **请求体示例：**
 ```json
 {
-  "task_name": "batch-office-conversion",
-  "priority": "high",
-  "callback_url": "https://your-service.com/webhook/conversion-complete",
-  "files": [
+"task_name": "batch-office-conversion",
+"priority": "high",
+"mode": "async",
+"callback_url": "https://your-service.com/webhook/conversion-complete",
+"storage": {
+    "endpoint": "http://minio:9000",
+    "access_key": "your-ak",
+    "secret_key": "your-sk",
+    "bucket": "custom-bucket"
+},
+"files": [
     {
-      "source_format": "doc",
-      "target_format": "docx",
-      "input_url": "https://storage.example.com/documents/report.doc",
-      "object_key": "uploads/2025/report.doc",
-      "size_mb": 2.5
+        "source_format": "doc",
+        "target_format": "docx",
+        "input_url": "https://storage.example.com/documents/report.doc",
+        "object_key": "uploads/2025/report.doc",
+        "filename": "report.doc",
+        "size_mb": 2.5
     },
     {
-      "source_format": "svg",
-      "target_format": "png",
-      "input_url": "https://storage.example.com/images/diagram.svg",
-      "size_mb": 0.8
+        "source_format": "svg",
+        "target_format": "png",
+        "input_url": "https://storage.example.com/images/diagram.svg",
+        "size_mb": 0.8,
+        "page_limit": null,
+        "duration_seconds": null
     },
     {
-      "source_format": "wav",
-      "target_format": "mp3",
-      "object_key": "audio/interview.wav",
-      "size_mb": 45.2
+        "source_format": "wav",
+        "target_format": "mp3",
+        "object_key": "audio/interview.wav",
+        "size_mb": 45.2,
+        "duration_seconds": 30
+    },
+    {
+        "source_format": "html",
+        "target_format": "pdf",
+        "base64_data": "PGh0bWw+PGJvZHk+PGgxPkJhc2U2NCBIVE1MPC9oMT48L2JvZHk+PC9odG1sPg==",
+        "filename": "inline.html",
+        "size_mb": 0.001,
+        "page_limit": 1
     }
-  ]
+]
 }
 ```
 
@@ -290,6 +310,29 @@ Content-Type: application/json
   "error_code": "ERR_FILE_TOO_LARGE",
   "error_status": 400,
   "message": "File size exceeds per-format limit"
+}
+```
+
+**Webhook 回调示例（异步完成）：**
+```json
+{
+    "task_id": "a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f",
+    "status": "success",
+    "results": [
+        {
+            "source": "doc",
+            "target": "docx",
+            "status": "success",
+            "object_key": "converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx",
+            "metadata": {"note": "Converted via LibreOffice soffice"}
+        },
+        {
+            "source": "wav",
+            "target": "mp3",
+            "status": "failed",
+            "reason": "Input preparation failed (source=audio/interview.wav): FileNotFoundError('...')"
+        }
+    ]
 }
 ```
 

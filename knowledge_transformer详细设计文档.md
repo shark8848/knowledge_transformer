@@ -199,7 +199,7 @@
 
 **API 请求/响应示例（含同步模式与错误源定位）：**
 
-请求：
+请求（同步，小体积单文件）：
 ```json
 {
   "task_name": "doc-and-audio",
@@ -245,13 +245,77 @@
 }
 ```
 
+请求（异步，含 storage/callback/base64/duration/page_limit 等完整元数据）：
+```json
+{
+  "task_name": "mixed-batch",
+  "mode": "async",
+  "priority": "high",
+  "callback_url": "https://your-service.com/webhook/conversion-complete",
+  "storage": {
+    "endpoint": "http://minio:9000",
+    "access_key": "your-ak",
+    "secret_key": "your-sk",
+    "bucket": "custom-bucket"
+  },
+  "files": [
+    {
+      "source_format": "doc",
+      "target_format": "docx",
+      "input_url": "https://storage.example.com/documents/report.doc",
+      "object_key": "uploads/2025/report.doc",
+      "filename": "report.doc",
+      "size_mb": 2.5
+    },
+    {
+      "source_format": "svg",
+      "target_format": "png",
+      "input_url": "https://storage.example.com/images/diagram.svg",
+      "size_mb": 0.8,
+      "page_limit": null,
+      "duration_seconds": null
+    },
+    {
+      "source_format": "wav",
+      "target_format": "mp3",
+      "object_key": "audio/interview.wav",
+      "size_mb": 45.2,
+      "duration_seconds": 30
+    },
+    {
+      "source_format": "html",
+      "target_format": "pdf",
+      "base64_data": "PGh0bWw+PGJvZHk+PGgxPkJhc2U2NCBIVE1MPC9oMT48L2JvZHk+PC9odG1sPg==",
+      "filename": "inline.html",
+      "size_mb": 0.001,
+      "page_limit": 1
+    }
+  ]
+}
+```
+
+响应（异步入队）：
+```json
+{
+  "status": "accepted",
+  "task_id": "a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f",
+  "message": "Task accepted and scheduled for conversion"
+}
+```
+
 **Celery 任务报文示例（API 校验后入队的有效负载）：**
 
-请求：
+请求（含 page_limit/duration/storage 覆盖）：
 ```json
 {
   "task_id": "f8c6a2fd-9d76-4bf0-9f2f-5e9f6a6e2c11",
   "priority": "normal",
+  "storage": {
+    "endpoint": "http://minio:9000",
+    "access_key": "your-ak",
+    "secret_key": "your-sk",
+    "bucket": "custom-bucket"
+  },
   "files": [
     {
       "source_format": "docx",
