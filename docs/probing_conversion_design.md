@@ -262,6 +262,7 @@ def select_strategy(block_type, base_strategy, base_params):
 | --- | --- | --- | --- |
 | 结构化报告/规程/论文 | docx, pdf, odt | `heading_block_length_split` | 高标题/列表密度，200~400 字分块 |
 | 弱结构长段（纪实、小说） | txt, docx, pdf, rtf | `sentence_split_sliding` | 句合并+滑窗，overlap 10~20% |
+| 聊天/问答/脚本/分隔符日志 | txt, md, log | `custom_delimiter_split` | 命中分隔符优先；未命中回退句级滑窗 |
 | 表格密集（财报、表单） | xlsx, csv, docx, pdf, ods | `table_batch` | 表格专用切片，文本块仍用标题/句切分 |
 | 代码/日志 | txt, log, md | `code_log_block` | 整块切分，无重叠 |
 | 公式密集（教材、试卷） | docx, pdf, odt | `heading_block_length_split` + `keep_block` | 公式整块保留，不拆分；文本按标题切分 |
