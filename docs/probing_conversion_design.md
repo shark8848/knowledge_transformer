@@ -9,7 +9,7 @@
 - **探针（probe）**：对源文档进行局部抽样的最小单元（按页、段、文本框、表格片段等）。
 - **特征剖析（profiling）**：对探针内容提取结构/统计/噪声特征，生成内容画像。
 - **策略推荐（strategy recommendation）**：基于画像选择切片策略，如 `heading_block + length_split`、`sentence_split + sliding_window`、`table_batch` 等。
-- **（当前不执行）规范化转换**：暂不调用 `conversion.handle_batch`，仅输出策略与参数供后续链路使用。
+
 
 ## 3. 总体流程
 1) **探针抽样**：
