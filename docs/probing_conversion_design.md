@@ -1,11 +1,6 @@
 # 文档切片方式智能推荐引擎
 
-## 1. 概述
-- 面对超大文档（数十至数百页）时，需在不加载全文的情况下快速洞察结构特征（标题层级、列表/表格密度、长段落/代码等），为后续切片与向量化选择合适策略。
-- 利用“小探针”抽样获取代表性片段，结合轻量规则/特征统计完成策略推荐，并在确定策略后调用 `conversion.handle_batch` 做格式规范化（如 DOCX/HTML/PDF→PDF/文本），为切片与向量化做准备。
-- 设计兼顾实时性（<1s 出推荐）、可观测性（探针命中率、推荐命中率）、可扩展性（支持多格式、多策略）。
-
-## 1.x 设计原则（对齐规范化引擎）
+-## 1. 设计原则（对齐规范化引擎）
 - **配置化与安全**：阈值、权重、LLM 开关、资源/页数/时长限制均可 YAML/环境变量热更；延续转换引擎的配额/鉴权/错误码体系。
 - **插件化/可扩展**：策略打分器、探针器、切片器解耦成可插拔组件，便于新增策略或替换 LLM 先验实现。
 - **资源优先级与异步**：轻量探针/推荐走高优先队列，切片执行可独立队列；支持链式 Celery，避免阻塞 API。
@@ -15,13 +10,18 @@
 - **可观测性**：对齐转换引擎的结构化日志/Tracing/Prometheus 指标，新增块级路由命中率、LLM 调用率、误切片率。
 - **数据最小化与合规**：探针仅抽样必要文本；LLM 仅传递最小上下文，支持脱敏与超时/令牌上限控制。
 
-## 2. 关键概念
+## 2. 概述
+- 面对超大文档（数十至数百页）时，需在不加载全文的情况下快速洞察结构特征（标题层级、列表/表格密度、长段落/代码等），为后续切片与向量化选择合适策略。
+- 利用“小探针”抽样获取代表性片段，结合轻量规则/特征统计完成策略推荐，并在确定策略后调用 `conversion.handle_batch` 做格式规范化（如 DOCX/HTML/PDF→PDF/文本），为切片与向量化做准备。
+- 设计兼顾实时性（<1s 出推荐）、可观测性（探针命中率、推荐命中率）、可扩展性（支持多格式、多策略）。
+
+## 3. 关键概念
 - **探针（probe）**：对源文档进行局部抽样的最小单元（按页、段、文本框、表格片段等）。
 - **特征剖析（profiling）**：对探针内容提取结构/统计/噪声特征，生成内容画像。
 - **策略推荐（strategy recommendation）**：基于画像选择切片策略，如 `heading_block + length_split`、`sentence_split + sliding_window`、`table_batch` 等。
 
 
-## 3. 总体流程
+## 4. 总体流程
 1) **探针抽样**：
    - 分页型（PDF/DOCX）：取头/中/尾各 1~2 页；检测分栏后按列切出探针。
    - 幻灯片（PPTX）：取头/中/尾页的文本框；保留页号。
@@ -39,7 +39,7 @@
   - 幻灯片：`slide_block + textbox_merge`。
 4) **当前限制与归属**：图片不做文本切片；表格、图片、公式会被定位并归属到最近的文本片段（或专属块），以避免语义丢失；表格后续使用专门的表格切片方式，不在本算法内。音视频如启用切片，缺省采用按场景切分（备选按时长切分）。
 
-## 10. 引擎工作流程图
+## 5. 引擎工作流程图
 
 ```mermaid
 flowchart TD
@@ -62,7 +62,7 @@ flowchart TD
   C -->|探针失败| Y[错误码返回\nPROBE_TIMEOUT/PROBE_EMPTY]
 ```
 
-## 4. 编排设计
+## 6. 编排设计
 - **任务链路（Chain）**：
   1. `probe.extract_signals`：对源文件做探针抽样与特征剖析，输出 `profile`。
   2. `probe.recommend_strategy`：基于 `profile` 返回 `strategy_id` 与参数（target_length/overlap/preserve_tables 等）。
@@ -110,7 +110,7 @@ def submit_job(doc_id, src_path, fmt):
     4) `recommend_task` 返回推荐策略和参数；
     5) 异常在各 task 内捕获并返回错误码，chain 将错误向上抛出供调用方处理。
 
-## 11. 智能自适应切片设计（推荐 + 切片执行）
+## 7. 智能自适应切片设计（推荐 + 切片执行）
 - **目标**：在已有推荐能力基础上自动完成切片执行，适配不同文档类型与场景；保持幂等、可观测，可在 Celery 中独立服务化。
 - **编排链路（Celery chain）**：转换 → 探针 → 推荐 → 切片执行 → 结果落盘/回传。
 
@@ -161,7 +161,7 @@ def submit_adaptive_slice(doc_id, src_path, fmt):
   - LLM 先验开启时，可将 `llm_prior` 一并存储，供离线评估。
   - 支持策略回退：切片失败时回退 `sentence_split_sliding` 通用方案。
 
-## 12. 分段智能自适应切片（章节/内容级混合策略）
+## 8. 分段智能自适应切片（章节/内容级混合策略）
 - **核心思想**：文档级推荐给出“基线策略+参数”，但执行阶段可按章节/块类型动态择优：同一文档不同片段可以使用不同策略（如正文按标题块切，表格按表格批切，代码块按代码策略，长段落按滑窗）。
 - **判别与路由**：
   - 基于转换后的结构节点（标题、段落、表格、代码块、图片/公式块）和探针画像特征，做块级类型判别。
@@ -207,7 +207,7 @@ def select_strategy(block_type, base_strategy, base_params):
   - LLM 介入最小化：仅在歧义块调用 LLM，小模型/低 token；无法判别时回退基线并打标 `fallback=true`。
   - 质量监控：跟踪块级误切片率（表格误判为正文、代码误判为正文）、冲突次数、回退率；超过阈值触发告警并记录样本用于规则/模型迭代。
 
-## 5. 推荐结果输出示例
+## 9. 推荐结果输出示例
 ```json
 {
   "task_id": "probe-and-recommend-123",
@@ -236,7 +236,7 @@ def select_strategy(block_type, base_strategy, base_params):
 }
 ```
 
-## 6. 策略推荐逻辑
+## 10. 策略推荐逻辑
 - `has_headings || list_density>阈值` → `heading_block + length_split(200~400字)`
 - `code_density>阈值 || log_pattern` → `code/log_block + no_overlap`
 - `table_density>阈值` → `table_batch + paragraph_split`
@@ -266,7 +266,7 @@ def select_strategy(block_type, base_strategy, base_params):
 | 图片 | png, jpeg, jpg | `keep_block_only` | 不切片，仅保留块或提示存储 |
 | 音视频 | mp4, mov, wav, mp3 | `av_scene_cut` | 缺省按场景切分；备选 `av_duration_cut` 按时长切分 |
 
-## 7. 核心算法
+## 11. 核心算法
 - **探针抽样**（O(k) 页/块）：
   - PDF/DOCX：`k<=6`，取头/中/尾页；若检测到分栏则切分列；若页数未知，先流式读取前若干页。
   - PPTX：取头/中/尾页文本框；记录 `slide_index` 与 `textbox_index`。
@@ -322,7 +322,7 @@ def select_strategy(block_type, base_strategy, base_params):
   - 探针失败：回退固定页窗（前 3 页）+ 通用 `sentence_split_sliding`。
   - 特征缺失：使用默认参数（200 字，15% overlap）。
 
-### 7.1 打分公式
+### 11.1 打分公式
 设特征：$h=heading\_ratio,\ l=list\_ratio,\ t=table\_ratio,\ c=code\_ratio,\ p=p90\_para\_len$，权重超参：$w_h,w_l,w_t,w_c,w_p$，则：
 
 $$S_{heading\_block}=w_h\cdot h + w_l\cdot l - w_p\cdot \max\left(0,\frac{p-300}{300}\right)$$
@@ -418,7 +418,7 @@ llm:
 - 代码/日志（高 c）：提高 $w_c$ 至 0.9，$w_p$ 降到 0.2 以减少长段惩罚的影响。
 - 公式密集（高 m）：提高 `m1` 精度，触发“整块保留”并在参数中设置 `preserve_math_block=true`。
 
-### 7.2 伪代码
+### 11.2 伪代码
 ```python
 def recommend(file, k=6, emit_candidates=False):
   try:
@@ -478,11 +478,11 @@ def recommend(file, k=6, emit_candidates=False):
     }
 ```
 
-  ### 7.4 大模型语义先验融合（可选）
+  ### 11.3 大模型语义先验融合（可选）
   - **触发条件**：当文件名包含明确语义关键词（report/log/slide/table/code/qa/exam）或探针样本存在不确定性时启用；生产可默认关闭，按需打开。
   - **输入**：文件名/路径、前 1~2 个探针文本；控制 token 上限避免成本过高。
   - **输出**：文档类型概率分布 `llm_prior`（如 report/narrative/table/code/slide），可附示例段落的推理标签。
-  - **融合方式**：在基础打分后加权（见 7.2 伪代码），对匹配的策略分数增加小幅偏置（示例 0.05~0.15）。
+  - **融合方式**：在基础打分后加权（见 11.2 伪代码），对匹配的策略分数增加小幅偏置（示例 0.05~0.15）。
   - **安全与开销**：限制 `max_tokens`，设置超时；无法获取先验时回退纯规则/统计打分。
   - **提示词示例（用于 LLM 决策）**：
 
@@ -515,7 +515,7 @@ probe_samples:
 - "第二章 财务报表..."
 ```
 
-### 7.3 探针失败返回格式与错误码约定
+### 11.4 探针失败返回格式与错误码约定
 - **返回格式**：
 ```json
 {
