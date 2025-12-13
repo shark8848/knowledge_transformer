@@ -56,10 +56,10 @@ flowchart TD
 - **任务链路（Chain）**：
   1. `probe.extract_signals`：对源文件做探针抽样与特征剖析，输出 `profile`。
   2. `probe.recommend_strategy`：基于 `profile` 返回 `strategy_id` 与参数（target_length/overlap/preserve_tables 等）。
-  3. （可选，非本方案范围）下游若需要，可在此之后自行调用 `conversion.handle_batch` 与切片。
-- **队列与优先级**：探针/推荐步骤轻量，统一使用高优先级队列；不涉及转换/切片耗时。
+
+- **队列与优先级**：探针/推荐步骤轻量，统一使用高优先级队列；
 - **Celery 编排示例（独立服务封装）**：
-  - 目标：将转换→探针→推荐封装为一个 Celery chain，供编排或上层编排器（如 Airflow）调用。
+  - 目标：将转换→探针→推荐封装为一个 Celery chain，供编排或API调用。
   - 依赖：`conversion.handle_batch`（返回规范化文档或页流）、`probe.extract_signals`、`probe.recommend_strategy`。
   - 简化示例：
 ```python
