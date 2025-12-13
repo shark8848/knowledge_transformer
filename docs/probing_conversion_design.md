@@ -270,15 +270,6 @@ def select_strategy(block_type, base_strategy, base_params):
 | 图片 | png, jpeg, jpg | `keep_block_only` | 不切片，仅保留块或提示存储 |
 | 音视频 | mp4, mov, wav, mp3 | `av_scene_cut` | 缺省按场景切分；备选 `av_duration_cut` 按时长切分 |
 
-**自定义分隔符策略要点（融入推荐/执行链路）**
-- 适用：聊天/问答对、脚本对白、半结构化日志、业务分隔符（`---`、`###`、`Q:`/`A:`、自定义正则）。
-- 启用：用户显式 `custom.enable=true` 或探针检测到分隔符命中段数 ≥ `custom.min_segments`；支持传入分隔符列表（文本/正则），如 `"^Q:|^A:"`、`"^### "`。
-- 路由：仅对 paragraph/list 文本块执行；表格/代码/公式/图片/幻灯片块跳过，避免与专用策略冲突。
-- 回退：命中率低则回退基线（标题块或句级滑窗），记录 `fallback_reason=delimiter_sparse`。
-- 参数：`custom.delimiters`、`custom.min_segment_len`（如 30）、`custom.max_segment_len`（如 800）、`custom.min_segments`（如 5）、`custom.enable`，重叠继承基线 `overlap_ratio`。
-- 质量：去除空段/短段，限制最大段数（如 5k）；可合并相邻同类短段；输出 `delimiter_used`、`segment_index` 元数据便于审计和重组。
-- 执行：先按分隔符切段，再对超长段做二次长度切分；未命中阈值时回退并标记 `fallback=true`。
-
 ## 11. 核心算法
 - **探针抽样**（O(k) 页/块）：
   - PDF/DOCX：`k<=6`，取头/中/尾页；若检测到分栏则切分列；若页数未知，先流式读取前若干页。
