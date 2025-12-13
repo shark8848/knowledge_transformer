@@ -12,13 +12,13 @@
 
 ## 2. 概述
 - 面对超大文档（数十至数百页）时，需在不加载全文的情况下快速洞察结构特征（标题层级、列表/表格密度、长段落/代码等），为后续切片与向量化选择合适策略。
-- 利用“小探针”抽样获取代表性片段，结合轻量规则/特征统计完成策略推荐，并在确定策略后调用 `conversion.handle_batch` 做格式规范化（如 DOCX/HTML/PDF→PDF/文本），为切片与向量化做准备。
+- 利用“小探针”抽样获取代表性片段，结合轻量规则/特征统计完成策略推荐。handle_batch` 做格式规范化（如 DOCX/HTML/PDF→PDF/文本），为切片与向量化做准备。
 - 设计兼顾实时性（<1s 出推荐）、可观测性（探针命中率、推荐命中率）、可扩展性（支持多格式、多策略）。
 
 ## 3. 关键概念
 - **探针（probe）**：对源文档进行局部抽样的最小单元（按页、段、文本框、表格片段等）。
 - **特征剖析（profiling）**：对探针内容提取结构/统计/噪声特征，生成内容画像。
-- **策略推荐（strategy recommendation）**：基于画像选择切片策略，如 `heading_block + length_split`、`sentence_split + sliding_window`、`table_batch` 等。
+- **策略推荐（strategy recommendation）**：基于画像选择切片策略（含自定义分隔符命中优先），如 `heading_block + length_split`、`sentence_split + sliding_window`、`table_batch`、`custom_delimiter_split`等。
 
 
 ## 4. 总体流程
@@ -29,7 +29,7 @@
    - 表格/日志：抽样若干行/块，保留列名/时间戳。
 2) **特征剖析**：
   - 结构：heading 密度、列表密度、表格/代码块存在性、页眉页脚噪声、目录模式、数学公式块存在性。
-  - 文本：段落均长/P90、符号/数字占比、重复模式、OCR 置信度（如有）、`math_density`（公式块/行占比，含 LaTeX/MathML/$$...$$/\(\) 检测）。
+  - 文本：段落均长/P90、符号/数字占比、重复模式、OCR 置信度（如有）、`math_density`（公式块/行占比，含 LaTeX/MathML/`$$...$$`/`\(\)` 检测）。
   - 版面：页/列分布、文本框数量、页码位置、图片占比。
 3) **策略推荐**：
   - 结构化：`heading_block + length_split(200~400字)`。
@@ -37,6 +37,7 @@
   - 表格密集：`table_batch + paragraph_split`。
   - 代码/日志：`code/log_block + no_overlap`。
   - 幻灯片：`slide_block + textbox_merge`。
+    - 自定义分隔符命中：`custom_delimiter_split + length_split`（用户/正则分隔符，命中阈值即选用，未命中回退基线）。
 4) **当前限制与归属**：图片不做文本切片；表格、图片、公式会被定位并归属到最近的文本片段（或专属块），以避免语义丢失；表格后续使用专门的表格切片方式，不在本算法内。音视频如启用切片，缺省采用按场景切分（备选按时长切分）。
 
 ## 5. 引擎工作流程图
@@ -237,6 +238,7 @@ def select_strategy(block_type, base_strategy, base_params):
 ```
 
 ## 10. 策略推荐逻辑
+- `custom.enable && delimiter_hits>=min_segments` → `custom_delimiter_split (+ length_split)`
 - `has_headings || list_density>阈值` → `heading_block + length_split(200~400字)`
 - `code_density>阈值 || log_pattern` → `code/log_block + no_overlap`
 - `table_density>阈值` → `table_batch + paragraph_split`
@@ -247,6 +249,7 @@ def select_strategy(block_type, base_strategy, base_params):
 | --- | --- | --- | --- | --- |
 | `heading_block_length_split` | `1 ->`<br>`标题块切分` | 按标题块切片，块内再按长度拆分 | 高标题/列表密度，结构化报告、规程 | `target_length`，`overlap_ratio` |
 | `sentence_split_sliding` | `2 ->`<br>`句级滑窗` | 句级切分+滑窗 | 弱结构长段文本，叙述类 | `target_length`（句合并阈值），`overlap_ratio` |
+| `custom_delimiter_split` | `9 ->`<br>`自定义分隔符切片` | 按用户/正则分隔符切段，超长再按长度拆分 | QA/聊天/脚本/半结构化日志，存在显式分隔符 | `delimiters[]`，`min_segment_len`，`max_segment_len`，`overlap_ratio` |
 | `table_batch` | `3 ->`<br>`表格批切` | 表格整块/分行切分 | 表格占比高、宽表 | `preserve_tables`，列数阈值，宽表拆行开关 |
 | `code_log_block` | `4 ->`<br>`代码/日志块` | 代码/日志块整块切分 | 代码密度高、日志模式 | `no_overlap`，块大小上限 |
 | `slide_block_textbox_merge` | `5 ->`<br>`幻灯片文本框合并` | 幻灯片文本框合并为页块 | PPTX/幻灯片 | `merge_textboxes=true`，按页/文本框顺序 |
@@ -266,6 +269,15 @@ def select_strategy(block_type, base_strategy, base_params):
 | 图片 | png, jpeg, jpg | `keep_block_only` | 不切片，仅保留块或提示存储 |
 | 音视频 | mp4, mov, wav, mp3 | `av_scene_cut` | 缺省按场景切分；备选 `av_duration_cut` 按时长切分 |
 
+**自定义分隔符策略要点（融入推荐/执行链路）**
+- 适用：聊天/问答对、脚本对白、半结构化日志、业务分隔符（`---`、`###`、`Q:`/`A:`、自定义正则）。
+- 启用：用户显式 `custom.enable=true` 或探针检测到分隔符命中段数 ≥ `custom.min_segments`；支持传入分隔符列表（文本/正则），如 `"^Q:|^A:"`、`"^### "`。
+- 路由：仅对 paragraph/list 文本块执行；表格/代码/公式/图片/幻灯片块跳过，避免与专用策略冲突。
+- 回退：命中率低则回退基线（标题块或句级滑窗），记录 `fallback_reason=delimiter_sparse`。
+- 参数：`custom.delimiters`、`custom.min_segment_len`（如 30）、`custom.max_segment_len`（如 800）、`custom.min_segments`（如 5）、`custom.enable`，重叠继承基线 `overlap_ratio`。
+- 质量：去除空段/短段，限制最大段数（如 5k）；可合并相邻同类短段；输出 `delimiter_used`、`segment_index` 元数据便于审计和重组。
+- 执行：先按分隔符切段，再对超长段做二次长度切分；未命中阈值时回退并标记 `fallback=true`。
+
 ## 11. 核心算法
 - **探针抽样**（O(k) 页/块）：
   - PDF/DOCX：`k<=6`，取头/中/尾页；若检测到分栏则切分列；若页数未知，先流式读取前若干页。
@@ -278,16 +290,18 @@ def select_strategy(block_type, base_strategy, base_params):
   - 版面噪声：页眉页脚相似度（跨页最长公共子序列/词频 Jaccard），页码位置，图片占比 `image_ratio`。
   - 文件名/路径信号：扩展名、文件名关键词（如 report/log/slide/table/code/qa/exam），用于先验判断文档类型。
 - **策略打分**（rule-first，score-second）：
-  - 先匹配高优先级规则（如 `table_ratio>t1` → 表格策略；`code_ratio>t2` → 代码/日志策略；`math_ratio>m1` → 需保留公式块整段切分）。表格的细粒度切片由表格策略单独处理；图片、公式标记归属到所在块，不单独切分。
+  - 先匹配高优先级规则（如 `table_ratio>t1` → 表格策略；`code_ratio>t2` → 代码/日志策略；`math_ratio>m1` → 需保留公式块整段切分；`custom.enable && delimiter_hits>=min_segments` → 自定义分隔符策略）。表格的细粒度切片由表格策略单独处理；图片、公式标记归属到所在块，不单独切分。
   - 对剩余策略计算分数：
     - `heading_block` 得分 ~ `heading_ratio + list_ratio`。
     - `sentence_split_sliding` 得分 ~ `1 - heading_ratio`，惩罚长段 `p90`。
     - `table_batch` 得分 ~ `table_ratio`。
+    - `custom_delimiter_split`：不参与常规打分，命中阈值即选用；可记录 `delimiter_hits` 供观测。
   - 选最高分策略，若分差 < ε，可返回候选列表供前端切换。
 - **参数估计**：
   - 目标长度：`min(max(p50段落长度, 150), 400)`；弱结构时用句长均值。
   - 重叠：`overlap = 0.15` 默认；若页眉噪声高，降低重叠；若信息稀疏，可升至 `0.2`。
   - 表格策略：若列数>12 或宽表，拆行块；否则整表为块。
+  - 自定义分隔符：命中后默认目标长度继承基线（如 200~400），但先按分隔符切段，再对超长段做二次拆分；未命中阈值时回退基线并记录 `fallback=true`。
 - **输出约束**：
   - 当前仅输出策略与参数；不执行转换/切片。
   - 媒体类（图片/音视频）返回“仅存储，不切片/不转换”提示；公式/图片块标记为保留整块，与所在文本片段一起落在同一切片，避免语义丢失。表格使用表格专用切片方式，归属当前片段并保持行列结构。
@@ -332,6 +346,8 @@ $$S_{sentence\_sliding}=1 - h - 0.3\cdot l - 0.2\cdot t - 0.2\cdot c + w_p\cdot 
 $$S_{table\_batch}=w_t\cdot t$$
 
 $$S_{code/log}=w_c\cdot c$$
+
+> 自定义分隔符策略不走打分公式，而是走“命中阈值即硬选”的 gating 逻辑，未命中时回退常规策略。
 
 - 初始权重建议：$w_h=0.6,\ w_l=0.4,\ w_t=0.8,\ w_c=0.8,\ w_p=0.3$。
 - 最终策略：先应用硬规则（如 $t>t_1$、$c>c_1$），否则选择 $\arg\max S$；若前两高分差 < $\epsilon$，返回候选列表供人工切换。
@@ -378,6 +394,11 @@ $$S_{code/log}=w_c\cdot c$$
 | `av.duration.overlap_ratio` | 0.05 | 音视频 | 时长切分的重叠比例 |
 | `llm.enable_prior` | false | 文本/通用 | 是否启用大模型语义先验加权 |
 | `llm.max_tokens` | 256 | 文本/通用 | LLM 调用 token 上限（控制成本） |
+| `custom.enable` | false | 文本 | 是否开启自定义分隔符策略 |
+| `custom.delimiters` | [] | 文本 | 文本/正则分隔符列表 |
+| `custom.min_segments` | 5 | 文本 | 命中阈值，低于则回退基线 |
+| `custom.min_segment_len` | 30 | 文本 | 最小段长，过短丢弃或合并 |
+| `custom.max_segment_len` | 800 | 文本 | 最大段长，超过则二次长度拆分 |
 
 **YAML 配置示例（可覆盖默认）**
 ```yaml
@@ -431,6 +452,10 @@ def recommend(file, k=6, emit_candidates=False):
       }
 
     features = profile(probes)                     # 结构/文本/噪声特征
+    delimiter_hits = detect_delimiters(
+      probes,
+      delimiters=request.custom.delimiters if request.custom.enable else []
+    )
   except ProbeError as e:
     return {
       "error_code": e.code,
@@ -439,40 +464,44 @@ def recommend(file, k=6, emit_candidates=False):
     }
 
   # 规则优先
-      if features.table_ratio > t1:
-        strategy = "table_batch"
-      elif features.code_ratio > t2:
-        strategy = "code_log_block"
-      else:
-        # 可选：结合大模型语义先验（文件名+探针文本分类）
-        llm_prior = classify_with_llm(filename=file.name, samples=probes[:2])  # 返回 doc_type 概率分布
+    if request.custom.enable and delimiter_hits >= request.custom.min_segments:
+      strategy = "custom_delimiter_split"
+      scores = {"custom_delimiter_split": 1.0, "delimiter_hits": delimiter_hits}
+    elif features.table_ratio > t1:
+      strategy = "table_batch"
+    elif features.code_ratio > t2:
+      strategy = "code_log_block"
+    else:
+      # 可选：结合大模型语义先验（文件名+探针文本分类）
+      llm_prior = classify_with_llm(filename=file.name, samples=probes[:2])  # 返回 doc_type 概率分布
 
-        # 基础打分
-        s_heading = w_h*features.heading_ratio + w_l*features.list_ratio - w_p*max(0, (features.p90_len-300)/300)
-        s_sentence = 1 - features.heading_ratio - 0.3*features.list_ratio - 0.2*features.table_ratio - 0.2*features.code_ratio + w_p*min(1, features.p90_len/400)
-        s_table = w_t*features.table_ratio
-        s_code = w_c*features.code_ratio
+      # 基础打分
+      s_heading = w_h*features.heading_ratio + w_l*features.list_ratio - w_p*max(0, (features.p90_len-300)/300)
+      s_sentence = 1 - features.heading_ratio - 0.3*features.list_ratio - 0.2*features.table_ratio - 0.2*features.code_ratio + w_p*min(1, features.p90_len/400)
+      s_table = w_t*features.table_ratio
+      s_code = w_c*features.code_ratio
 
-        # 语义先验加权（示例：若 LLM 判断为“slide/report/table”则提升对应策略分）
-        s_heading += 0.1 * llm_prior.get("report", 0)
-        s_sentence += 0.05 * llm_prior.get("narrative", 0)
-        s_table   += 0.15 * llm_prior.get("table", 0)
-        s_code    += 0.1 * llm_prior.get("code", 0)
+      # 语义先验加权（示例：若 LLM 判断为“slide/report/table”则提升对应策略分）
+      s_heading += 0.1 * llm_prior.get("report", 0)
+      s_sentence += 0.05 * llm_prior.get("narrative", 0)
+      s_table   += 0.15 * llm_prior.get("table", 0)
+      s_code    += 0.1 * llm_prior.get("code", 0)
 
-        scores = {
-          "heading_block_length_split": s_heading,
-          "sentence_split_sliding": s_sentence,
-          "table_batch": s_table,
-          "code_log_block": s_code,
-        }
-        strategy = argmax(scores)
+      scores = {
+        "heading_block_length_split": s_heading,
+        "sentence_split_sliding": s_sentence,
+        "table_batch": s_table,
+        "code_log_block": s_code,
+      }
+      strategy = argmax(scores)
 
-    params = estimate_params(features, strategy)   # 目标长度/overlap/拆表等
+    params = estimate_params(features, strategy, custom=request.custom)   # 目标长度/overlap/拆表等
 
     return {
         "strategy_id": strategy,
         "params": params,
         "candidates": scores if emit_candidates else None,
+        "delimiter_hits": delimiter_hits,
         "profile": features,
         "notes": "仅推荐，不执行转换/切片"
     }
