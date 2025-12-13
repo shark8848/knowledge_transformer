@@ -100,6 +100,103 @@ def submit_job(doc_id, src_path, fmt):
     4) `recommend_task` 返回推荐策略和参数；
     5) 异常在各 task 内捕获并返回错误码，chain 将错误向上抛出供调用方处理。
 
+## 11. 智能自适应切片设计（推荐 + 切片执行）
+- **目标**：在已有推荐能力基础上自动完成切片执行，适配不同文档类型与场景；保持幂等、可观测，可在 Celery 中独立服务化。
+- **编排链路（Celery chain）**：转换 → 探针 → 推荐 → 切片执行 → 结果落盘/回传。
+
+```python
+from celery import Celery, chain
+
+app = Celery("adaptive_slice", broker="redis://localhost:6379/0", backend="redis://localhost:6379/1")
+
+@app.task(name="conversion.handle_batch")
+def convert_task(doc_id, src_path, fmt):
+    return conversion.handle_batch(doc_id=doc_id, src_path=src_path, fmt=fmt)
+
+@app.task(name="probe.extract_signals")
+def probe_task(doc_handle):
+    return probe.extract_signals(doc_handle)
+
+@app.task(name="probe.recommend_strategy")
+def recommend_task(profile):
+    return probe.recommend_strategy(profile)
+
+@app.task(name="slicer.apply_strategy")
+def slice_task(doc_handle, recommendation):
+    # recommendation = {strategy_id, params, profile}
+    return slicer.apply(doc_handle, recommendation)
+
+def submit_adaptive_slice(doc_id, src_path, fmt):
+    flow = chain(
+        convert_task.s(doc_id, src_path, fmt),      # 标准化文档
+        probe_task.s(),                             # 探针 + 画像
+        recommend_task.s(),                         # 策略 + 参数
+        slice_task.s(),                             # 按推荐策略切片
+    )
+    return flow.apply_async().id
+
+# 查询
+# result = app.AsyncResult(job_id).get(timeout=120)
+```
+
+- **输入/输出契约**：
+  - 入参：`doc_id, src_path, fmt`；可加 `priority`、`trace_id`。
+  - 输出：`{chunks: [...], meta: {strategy_id, params, profile, doc_id}}`，失败时 `{error_code, message}`。
+- **切片执行要点**：
+  - 采用推荐的 `strategy_id` 和 `params` 驱动 `slicer.apply`；表格/媒体策略需保留行列与锚点元数据。
+  - 支持幂等：同一 `doc_id` + `trace_id` 重复请求直接返回已完成结果。
+  - 观测：记录转换/探针/推荐/切片各阶段耗时、错误码、chunk 数量与平均长度。
+  - 限流与超时：转换和切片阶段单独超时；探针/推荐保持低延迟。
+- **可选扩展**：
+  - LLM 先验开启时，可将 `llm_prior` 一并存储，供离线评估。
+  - 支持策略回退：切片失败时回退 `sentence_split_sliding` 通用方案。
+
+## 12. 分段智能自适应切片（章节/内容级混合策略）
+- **核心思想**：文档级推荐给出“基线策略+参数”，但执行阶段可按章节/块类型动态择优：同一文档不同片段可以使用不同策略（如正文按标题块切，表格按表格批切，代码块按代码策略，长段落按滑窗）。
+- **判别与路由**：
+  - 基于转换后的结构节点（标题、段落、表格、代码块、图片/公式块）和探针画像特征，做块级类型判别。
+  - 块级优先级：表格 > 代码/日志 > 公式/图片保留 > 幻灯片文本框 > 基线策略（heading_block / sentence_sliding）。
+  - 可选 LLM 细粒度判别：对歧义块（如嵌套列表/伪代码）调用轻量 LLM 分类，再路由策略。
+- **执行流程（在切片执行器内部）**：
+```python
+def adaptive_slice(doc_handle, recommendation, profile):
+    base_strategy = recommendation["strategy_id"]
+    base_params = recommendation["params"]
+    chunks = []
+    for block in iter_blocks(doc_handle):
+        block_type = detect_block_type(block)  # table/code/math/image/slide/paragraph
+        strategy, params = select_strategy(block_type, base_strategy, base_params)
+        chunks.extend(apply_strategy(block, strategy, params))
+    return chunks
+
+def select_strategy(block_type, base_strategy, base_params):
+    if block_type == "table":
+        return "table_batch", {"preserve_tables": True}
+    if block_type in ("code", "log"):
+        return "code_log_block", {"no_overlap": True}
+    if block_type in ("math", "image"):
+        return "keep_block_only", {"keep_block": True}
+    if block_type == "slide_text":
+        return "slide_block_textbox_merge", {}
+    # 默认回落基线策略
+    return base_strategy, base_params
+```
+- **参数继承与微调**：
+  - 默认继承推荐参数；对表格/代码/图片块使用各自安全参数（如 `no_overlap=True`，保留表头）。
+  - 对极长段落可局部调高 `overlap_ratio`，对噪声页眉降低重叠。
+- **输出与元数据**：
+  - 每个 chunk 记录 `strategy_id`、`block_type`、`anchor_id/page_index/column_index`，便于检索与审计。
+  - 统计混合策略分布（各策略生成的 chunk 数/比例），支持灰度对比。
+- **可观测性与回退**：
+  - 暴露块级路由命中率、LLM 调用次数与耗时；异常块回退基线策略并标记 `fallback=true`。
+  - 若切片阶段出错，可整体回退“纯基线策略”重试一遍。
+- **补充优化（避免冲突、提升质量）**：
+  - 检测一致性：解析阶段统一输出 `block_type`、页/列坐标、锚点 ID，切片阶段只按此路由，避免策略与识别不一致。
+  - 互斥与跳过：文本滑窗对 block_type ∈ {table, code, math, image} 直接跳过；表格/代码策略不落在 paragraph/list；math/image 仅走 `keep_block_only`，不再进入 length_split。
+  - 参数安全阈值：表格块强制 `preserve_tables=True`，代码/日志强制 `no_overlap=True`，图片/公式强制 `keep_block=True`；对超宽表格可拆行，对超长段落自动抬高重叠。
+  - LLM 介入最小化：仅在歧义块调用 LLM，小模型/低 token；无法判别时回退基线并打标 `fallback=true`。
+  - 质量监控：跟踪块级误切片率（表格误判为正文、代码误判为正文）、冲突次数、回退率；超过阈值触发告警并记录样本用于规则/模型迭代。
+
 ## 5. 推荐结果输出示例
 ```json
 {
