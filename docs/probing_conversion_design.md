@@ -536,7 +536,7 @@ probe_samples:
   - 对媒体类 `PROBE_UNSUPPORTED_FORMAT` 直接提示“仅存储，不切片”。
   - 对 `PROBE_SIZE_LIMIT` 返回上限信息，建议分批或压缩后重试。
 
-## 8. 元数据与可观测性
+## 12. 元数据与可观测性
 - **保留元数据**：doc_id、source_format、page/slide、section_path、strategy_id、probe_sample_info、chunk_rule。
 - **指标**：
   - 探针耗时、探针覆盖率（采样页/总页估计）、策略推荐耗时。
@@ -544,7 +544,7 @@ probe_samples:
   - （当前不涉及转换/切片）
 - **日志/调试**：记录探针样本摘要、推荐原因（rule hit）、评分明细（含特征与权重），不含原文全文。
 
-## 9. 性能与降级
+## 13. 性能与降级
 - 抽样优先：仅解析头/中/尾窗口，必要时分页流式；解析失败时回退固定长度切片。
 - 资源控制：限制单任务文件大小/页数；对超大文档分批转换（page ranges）。
 - 失败回退：conversion 失败时返回错误码并携带 source 定位；切片失败回退通用滑窗策略。
