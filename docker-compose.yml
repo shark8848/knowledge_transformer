@@ -124,6 +124,65 @@ services:
     networks:
       - rag-network
 
+  # Slicer Recommendation API (independent module)
+  slicer-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slicer-api
+    ports:
+      - "8100:8100"
+      - "9100:9093"
+    environment:
+      - SLICE_celery__broker_url=redis://redis:6379/0
+      - SLICE_celery__result_backend=redis://redis:6379/1
+      - SLICE_monitoring__prometheus_port=9093
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: uvicorn slicer_service.app:app --host 0.0.0.0 --port 8100
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rag-network
+
+  # Slicer Celery Worker
+  slicer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slicer-worker
+    environment:
+      - SLICE_celery__broker_url=redis://redis:6379/0
+      - SLICE_celery__result_backend=redis://redis:6379/1
+      - SLICE_monitoring__prometheus_port=9093
+    depends_on:
+      - redis
+    command: celery -A slicer_service.celery_app:celery_app worker --loglevel=info --concurrency=2
+    networks:
+      - rag-network
+
+  # Flower for slicer Celery
+  slicer-flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slicer-flower
+    ports:
+      - "5556:5556"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - slicer-worker
+    command: celery -A slicer_service.celery_app:celery_app flower --port=5556
+    networks:
+      - rag-network
+
 volumes:
   redis-data:
   minio-data:

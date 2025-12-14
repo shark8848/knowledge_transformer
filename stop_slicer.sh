@@ -22,10 +22,8 @@ stop_component() {
   rm -f "$pid_file"
 }
 
-stop_component "FastAPI" "$RUN_DIR/api.pid"
-stop_component "Celery" "$RUN_DIR/celery.pid"
-stop_component "Flower" "$RUN_DIR/flower.pid"
-stop_component "TestReport" "$RUN_DIR/test-report.pid"
-stop_component "APIDocs" "$RUN_DIR/api-docs.pid"
+stop_component "Slicer API" "$RUN_DIR/slicer-api.pid"
+stop_component "Slicer Worker" "$RUN_DIR/slicer-worker.pid"
+stop_component "Slicer Flower" "$RUN_DIR/slicer-flower.pid"
 
-echo "[stop] Shutdown sequence completed."
+echo "[stop] Slicer shutdown completed."

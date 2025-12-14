@@ -14,7 +14,7 @@ export PYTHONPATH
 
 require_bin() {
   if [[ ! -x "$1" ]]; then
-    echo "[show] Missing executable: $1" >&2
+    echo "[converter-show] Missing executable: $1" >&2
     exit 1
   fi
 }
@@ -101,7 +101,6 @@ from rag_converter.config import Settings
 from rag_converter.celery_app import celery_app
 
 cfg = Settings.from_source(config_file=sys.argv[1])
-# Ensure celery app picks up latest config if env differs.
 celery_app.conf.broker_url = cfg.celery.broker_url
 celery_app.conf.result_backend = cfg.celery.result_backend
 try:
@@ -112,14 +111,14 @@ except Exception as exc:  # pragma: no cover
 PY
 }
 
-echo "== Process Status =="
-printf "%-18s %s\n" "FastAPI" "$(is_running "$RUN_DIR/api.pid")"
-printf "%-18s %s\n" "Celery" "$(is_running "$RUN_DIR/celery.pid")"
-printf "%-18s %s\n" "Flower" "$(is_running "$RUN_DIR/flower.pid")"
-printf "%-18s %s\n" "TestReport" "$(is_running "$RUN_DIR/test-report.pid")"
-printf "%-18s %s\n" "APIDocs" "$(is_running "$RUN_DIR/api-docs.pid")"
-printf "%-18s %s\n" "FastAPI /healthz" "$(check_http "http://127.0.0.1:${API_PORT}/healthz")"
-printf "%-18s %s\n" "API docs /" "$(check_http "http://127.0.0.1:${API_DOCS_PORT}/")"
+echo "== Converter Process Status =="
+printf "%-20s %s\n" "Converter FastAPI" "$(is_running "$RUN_DIR/api.pid")"
+printf "%-20s %s\n" "Converter Celery" "$(is_running "$RUN_DIR/celery.pid")"
+printf "%-20s %s\n" "Converter Flower" "$(is_running "$RUN_DIR/flower.pid")"
+printf "%-20s %s\n" "TestReport" "$(is_running "$RUN_DIR/test-report.pid")"
+printf "%-20s %s\n" "APIDocs" "$(is_running "$RUN_DIR/api-docs.pid")"
+printf "%-20s %s\n" "FastAPI /healthz" "$(check_http "http://127.0.0.1:${API_PORT}/healthz")"
+printf "%-20s %s\n" "API docs /" "$(check_http "http://127.0.0.1:${API_DOCS_PORT}/")"
 
 PROM_PORT=$("$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
 import sys
@@ -127,13 +126,13 @@ from rag_converter.config import Settings
 print(Settings.from_source(config_file=sys.argv[1]).monitoring.prometheus_port)
 PY
 )
-printf "%-18s %s\n" "API metrics" "http://127.0.0.1:${PROM_PORT}/metrics"
-printf "%-18s %s\n" "Worker metrics" "http://127.0.0.1:$((PROM_PORT + 1))/metrics"
-printf "%-18s %s\n" "Flower UI" "http://127.0.0.1:${FLOWER_PORT}/flower"
-printf "%-18s %s\n" "Test report" "http://127.0.0.1:${TEST_REPORT_PORT}/"
-printf "%-18s %s\n" "API docs" "http://127.0.0.1:${API_DOCS_PORT}/"
+printf "%-20s %s\n" "API metrics" "http://127.0.0.1:${PROM_PORT}/metrics"
+printf "%-20s %s\n" "Worker metrics" "http://127.0.0.1:$((PROM_PORT + 1))/metrics"
+printf "%-20s %s\n" "Flower UI" "http://127.0.0.1:${FLOWER_PORT}/flower"
+printf "%-20s %s\n" "Test report" "http://127.0.0.1:${TEST_REPORT_PORT}/"
+printf "%-20s %s\n" "API docs" "http://127.0.0.1:${API_DOCS_PORT}/"
 
 echo "\n== External Dependencies =="
-printf "%-18s %s\n" "Redis" "$(check_redis)"
-printf "%-18s %s\n" "MinIO" "$(check_minio)"
-printf "%-18s %s\n" "Celery workers" "$(celery_workers)"
+printf "%-20s %s\n" "Redis" "$(check_redis)"
+printf "%-20s %s\n" "MinIO" "$(check_minio)"
+printf "%-20s %s\n" "Celery workers" "$(celery_workers)"

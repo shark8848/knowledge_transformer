@@ -28,7 +28,7 @@ FLOWER_PORT="${FLOWER_PORT:-5555}"
 
 require_bin() {
   if [[ ! -x "$1" ]]; then
-    echo "[start] Missing executable: $1" >&2
+    echo "[converter-start] Missing executable: $1" >&2
     exit 1
   fi
 }
@@ -52,23 +52,22 @@ is_running() {
 start_component() {
   local name="$1" pid_file="$2" log_file="$3" cmd=("${@:4}")
   if is_running "$pid_file"; then
-    echo "[start] $name already running (PID $(<"$pid_file"))"
+    echo "[converter-start] $name already running (PID $(<"$pid_file"))"
     return
   fi
-  echo "[start] Launching $name ..."
-  RAG_CONFIG_FILE="$CONFIG_FILE" nohup "${cmd[@]}" \
-    >>"$log_file" 2>&1 &
+  echo "[converter-start] Launching $name ..."
+  RAG_CONFIG_FILE="$CONFIG_FILE" nohup "${cmd[@]}" >>"$log_file" 2>&1 &
   echo $! >"$pid_file"
-  echo "[start] $name PID $(<"$pid_file")"
+  echo "[converter-start] $name PID $(<"$pid_file")"
 }
 
-start_component "FastAPI" "$RUN_DIR/api.pid" "$LOG_DIR/api.log" \
+start_component "Converter FastAPI" "$RUN_DIR/api.pid" "$LOG_DIR/api.log" \
   "$VENV_BIN/uvicorn" rag_converter.app:app --host 0.0.0.0 --port "$API_PORT"
 
-start_component "Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/celery.log" \
+start_component "Converter Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/celery.log" \
   "$VENV_BIN/celery" -A rag_converter.celery_app.celery_app worker -l "$CELERY_LOG_LEVEL"
 
-start_component "Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/flower.log" \
+start_component "Converter Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/flower.log" \
   "$VENV_BIN/celery" -A rag_converter.celery_app.celery_app flower --port="$FLOWER_PORT" --url_prefix="/flower"
 
 start_component "TestReport" "$RUN_DIR/test-report.pid" "$LOG_DIR/test-report.log" \
@@ -81,4 +80,4 @@ start_component "APIDocs" "$RUN_DIR/api-docs.pid" "$LOG_DIR/api-docs.log" \
       API_DOCS_FAVICON="$API_DOCS_FAVICON" API_DOCS_TARGET_URL="$API_DOCS_TARGET_URL" \
   "$VENV_BIN/python" "$ROOT_DIR/api_docs_server.py"
 
-echo "[start] All components launched. Logs stored in $LOG_DIR"
+echo "[converter-start] All components launched. Logs stored in $LOG_DIR"

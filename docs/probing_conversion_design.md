@@ -42,26 +42,7 @@
 
 ## 5. 引擎工作流程图
 
-```mermaid
-flowchart TD
-  A[接收文档/metadata] --> B{支持格式?}
-  B -- 否 --> Z[返回 PROBE_UNSUPPORTED_FORMAT / 仅存储提示]
-  B -- 是 --> C[探针抽样\n头/中/尾页; 分栏/幻灯片/表格采样]
-  C --> D[特征剖析\n结构/文本/噪声/文件名]
-  D --> E{硬规则命中?}
-  E -- 表格/代码/公式高 --> F[直接选定表格/代码/保留块策略]
-  E -- 否 --> G[可选 LLM 语义先验\n文件名+探针分类]
-  G --> H[统计打分\nheading/sentence/table/code]
-  H --> I[融合 LLM 偏置\n提升对应策略得分]
-  I --> J{最高分差 < ε?}
-  J -- 是 --> K[返回候选列表]
-  J -- 否 --> L[返回单一策略]
-  F --> M[参数估计\n长度/overlap/表格/媒体]
-  K --> N[输出推荐\nstrategy_id, params, candidates, profile]
-  L --> N
-  M --> N
-  C -->|探针失败| Y[错误码返回\nPROBE_TIMEOUT/PROBE_EMPTY]
-```
+- Mermaid 源码已拆分至 `mermaid-images/probe_recommend_flowchart.mmd` 便于独立维护；如需更新或渲染，请编辑该文件。
 
 ## 6. 编排设计
 - **任务链路（Chain）**：
@@ -556,6 +537,18 @@ probe_samples:
   - 对 `PROBE_TIMEOUT` 可提示“重试”或降级固定规则（如通用滑窗）。
   - 对媒体类 `PROBE_UNSUPPORTED_FORMAT` 直接提示“仅存储，不切片”。
   - 对 `PROBE_SIZE_LIMIT` 返回上限信息，建议分批或压缩后重试。
+
+### 11.5 格式先验 + 探针加权推荐算法（已实现）
+- **适用范围**：除图片/音视频外的文档；表格/代码/幻灯片格式优先，仍保持“仅推荐，不执行转换/切片”。
+- **优先级硬路由（格式先验）**：
+  - 表格格式（xlsx/xls/csv/tsv）→ `table_batch`。
+  - 代码/日志格式（py/c/cpp/java/js/ts/go/rs/rb/php/sh/log）→ `code_log_block`。
+  - 幻灯片格式（ppt/pptx）→ `slide_block_textbox_merge`。
+- **探针规则优先**：若探针表格密度 `table_ratio > t1`，直接表格；若代码密度 `code_ratio > t2`，直接代码；自定义分隔符命中阈值则优先分隔符策略。
+- **负分/奖励加权（格式×探针）**：在统计打分前叠加偏置：表格格式为 `table_batch` 加正偏置、对标题/句级轻微减分；代码格式为 `code_log_block` 加正偏置、对其他策略减分；报告类（doc/docx/pdf/html）对标题/句级小幅加分。
+- **多页短路**：若任一页命中表格阈值，跨页聚合前直接选 `table_batch`，避免标题页拉高 heading 分。
+- **参数估计**：沿用现有 `estimate_params`，表格 `preserve_tables=true`，代码 `no_overlap=true`，幻灯片 `merge_textboxes=true`，标题/句级按 `p50` 估计块长与 overlap。
+- **输出**：返回 `strategy_id`、`params`、可选 `candidates`，并保持“仅推荐，不执行转换/切片”提示。
 
 ## 12. 元数据与可观测性
 - **保留元数据**：doc_id、source_format、page/slide、section_path、strategy_id、probe_sample_info、chunk_rule。
