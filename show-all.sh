@@ -17,5 +17,11 @@ run_script() {
 run_script "$ROOT_DIR/show_converter.sh" "converter"
 run_script "$ROOT_DIR/show_slicer.sh" "slicer"
 run_script "$ROOT_DIR/show_pipeline.sh" "pipeline"
+run_script "$ROOT_DIR/show_ui.sh" "ui"
+run_script "$ROOT_DIR/show_llm.sh" "llm"
+run_script "$ROOT_DIR/show_vector.sh" "vector"
+run_script "$ROOT_DIR/show_asr.sh" "asr"
+run_script "$ROOT_DIR/show_multimodal.sh" "multimodal"
+run_script "$ROOT_DIR/show_video.sh" "video"
 
 echo "[show-all] Done." 

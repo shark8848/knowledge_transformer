@@ -7,7 +7,6 @@ RUN_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
 PIPELINE_PORT="${PIPELINE_PORT:-9100}"
 PIPELINE_LOG_LEVEL="${PIPELINE_LOG_LEVEL:-info}"
-PIPELINE_UI_PORT="${PIPELINE_UI_PORT:-7860}"
 PIPELINE_FLOWER_PORT="${PIPELINE_FLOWER_PORT:-5557}"
 PIPELINE_QUEUE="${PIPELINE_QUEUE:-pipeline}"
 
@@ -82,10 +81,5 @@ start_component "Pipeline API" "$RUN_DIR/pipeline-api.pid" "$LOG_DIR/pipeline-ap
 # Pipeline Flower
 start_component "Pipeline Flower" "$RUN_DIR/pipeline-flower.pid" "$LOG_DIR/pipeline-flower.log" \
   "$VENV_BIN/celery" -A pipeline_service.celery_app:pipeline_celery flower --port="$PIPELINE_FLOWER_PORT" --url_prefix="/pipeline-flower"
-
-# Pipeline UI (Gradio)
-start_component "Pipeline UI" "$RUN_DIR/pipeline-ui.pid" "$LOG_DIR/pipeline-ui.log" \
-  env GRADIO_SERVER_NAME="0.0.0.0" GRADIO_SERVER_PORT="$PIPELINE_UI_PORT" PIPELINE_API_URL="http://127.0.0.1:${PIPELINE_PORT}" \
-  "$VENV_BIN/python" -m pipeline_service.ui
 
 echo "[pipeline-start] Pipeline components launched. Logs: $LOG_DIR"

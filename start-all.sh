@@ -16,8 +16,21 @@ run_script() {
 # Start core services first to satisfy dependencies.
 run_script "$ROOT_DIR/start_converter.sh" "converter"
 run_script "$ROOT_DIR/start_slicer.sh" "slicer"
+# Generic LLM service (independent provider)
+run_script "$ROOT_DIR/start_llm.sh" "llm"
+# Vector service (embeddings/rerank)
+run_script "$ROOT_DIR/start_vector.sh" "vector"
 # Pipeline handles downstream orchestration; disable its dependency autostart to avoid duplication.
 DEPEND_START_CONVERTER=false DEPEND_START_SLICER=false \
   run_script "$ROOT_DIR/start_pipeline.sh" "pipeline"
+# UI service (Gradio frontend)
+run_script "$ROOT_DIR/start_ui.sh" "ui"
+
+# ASR and multimodal are independent entrypoints used by video.
+run_script "$ROOT_DIR/start_asr.sh" "asr"
+run_script "$ROOT_DIR/start_multimodal.sh" "multimodal"
+
+# Video service depends on asr/multimodal availability.
+run_script "$ROOT_DIR/start_video.sh" "video"
 
 echo "[start-all] Done." 

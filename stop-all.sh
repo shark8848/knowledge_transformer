@@ -14,7 +14,13 @@ run_script() {
 }
 
 # Stop dependent consumers before providers.
+run_script "$ROOT_DIR/stop_video.sh" "video"
 run_script "$ROOT_DIR/stop_pipeline.sh" "pipeline"
+run_script "$ROOT_DIR/stop_ui.sh" "ui"
+run_script "$ROOT_DIR/stop_llm.sh" "llm"
+run_script "$ROOT_DIR/stop_vector.sh" "vector"
+run_script "$ROOT_DIR/stop_multimodal.sh" "multimodal"
+run_script "$ROOT_DIR/stop_asr.sh" "asr"
 run_script "$ROOT_DIR/stop_slicer.sh" "slicer"
 run_script "$ROOT_DIR/stop_converter.sh" "converter"
 
