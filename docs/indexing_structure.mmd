@@ -1,0 +1,40 @@
+flowchart LR
+    %% Data and processing
+    A["Raw media / mm-schema manifest"] --> B["Index Builder"]
+    B --> C1["doc_meta_idx\n(BM25 / filters)"]
+    B --> C2["chunk_text_idx\n(BM25 on chunks/keyframes)"]
+    B --> C3["vec_summary\n(doc-level embeddings)"]
+    B --> C4["vec_text\n(chunk text embeddings)"]
+    B --> C5["vec_image\n(keyframe embeddings)"]
+    B --> C6["vec_mm (optional)\n(multimodal embeddings)"]
+
+    %% Query path - FIXED
+    Q["Query / embedding"] --> R["Hybrid Router"]
+    
+    %% Router sends queries to appropriate indexes
+    R -->|lexical query| Q1["BM25 Search"]
+    R -->|semantic query| Q2["Vector Search"]
+    R -->|visual query| Q3["Visual Search"]
+    R -.->|multimodal query| Q4["Multimodal Search"]
+    
+    %% Queries execute on indexes
+    Q1 --> C2
+    R -->|filter| C1
+    R -->|prefilter| C3
+    Q2 --> C4
+    Q3 --> C5
+    Q4 --> C6
+    
+    %% Results flow to merger
+    C1 --> M["Candidate Merge + Rerank"]
+    C2 --> M
+    C3 --> M
+    C4 --> M
+    C5 --> M
+    C6 --> M
+    M --> O["Results (chunks/keyframes)"]
+
+    %% Updates & rebuild
+    U["Model/config change"] --> B
+    U --> R
+    U --> M
