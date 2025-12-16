@@ -145,7 +145,7 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 2. **资源与安全限制**：按格式与全局的大小/批量上限，API 默认使用 `appid+key` 认证，可通过 CLI 管理密钥。
 3. **错误码体系**：集中式错误码注册（多语言），自动映射 HTTP 状态与业务状态码。
 4. **插件化架构**：转换逻辑与格式能力以插件形式装配，支持运行时发现与动态扩展。
-5. **细粒度转换控制**：文档类（doc/docx/html/ppt/pptx）支持 `page_limit` 截断 PDF 页数，音视频类支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
+5. **细粒度转换控制**：文档类（doc/docx/html/ppt/pptx）支持 `page_limit` 截断 PDF 页数（`0/null`=全文，未传则采用配置的 `sample_pages` 抽样），音视频类支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
 6. **可观测性**：结构化日志、追踪 ID、Prometheus 指标以及健康/依赖监控端点。
 7. **异步任务处理**：所有转换任务通过 Celery 异步执行，FastAPI 负责接收请求和返回 task_id，避免长时间阻塞连接。支持 webhook 回调、Result Backend 查询等多种结果获取方式。
 
@@ -256,10 +256,10 @@ Content-Type: application/json
 | `files[].base64_data` | string (base64) | ✗ | 内联内容（富文本/二进制）base64 字符串，便于直接传输小文件 |
 | `files[].filename` | string | ✗ | 与 `base64_data` 搭配的文件名（未填则根据 `source_format` 推断扩展名） |
 | `files[].size_mb` | number | ✓ | 文件大小（MB），用于预检验证 |
-| `files[].page_limit` | number | ✗ | 文档类可选：限制转换到 PDF 的页数（从第 1 页开始），适用于 `doc/docx/html/ppt/pptx` |
+| `files[].page_limit` | number | ✗ | 文档类可选：限制转换到 PDF 的页数（从第 1 页开始），适用于 `doc/docx/html/ppt/pptx`；`0/null` 表示全文，未提供则使用服务端 `sample_pages` 默认抽样 |
 | `files[].duration_seconds` | number | ✗ | 音/视频可选：裁剪转换时长（秒，t=0 起），适用于 `wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif` |
 
-`page_limit` 与 `duration_seconds` 互斥：仅文档格式接受 `page_limit`，仅音视频/动图接受 `duration_seconds`。文档类会在生成 PDF 后裁剪前 N 页，音视频通过 FFmpeg `-t` 从 0 秒截取指定时长。
+`page_limit` 与 `duration_seconds` 互斥：仅文档格式接受 `page_limit`，仅音视频/动图接受 `duration_seconds`。文档类会在生成 PDF 后裁剪前 N 页（`0/null` 表示不裁剪全文；未传使用 `sample_pages` 抽样），音视频通过 FFmpeg `-t` 从 0 秒截取指定时长。
 
 > 同步模式说明：`mode=sync` 仅支持单文件、小体积场景（建议 <20MB），不建议携带 `callback_url`。执行超时将直接返回错误，避免阻塞 API 线程。
 

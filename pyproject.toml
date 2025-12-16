@@ -28,6 +28,8 @@ dependencies = [
     "requests>=2.31",
     "markdownify>=0.12",
     "gradio>=4.36",
+    "openai-whisper>=20231117",
+    "dashscope>=1.15.0",
     "openpyxl>=3.1",
     "tabulate>=0.9",
 ]
