@@ -93,7 +93,13 @@ def create_app() -> FastAPI:
         for f in payload["files"]:
             f["source_format"] = normalize_source_format(f.get("source_format"))
             f["target_format"] = prefer_markdown_target(f["source_format"], f.get("target_format"))
-            f.setdefault("page_limit", settings.sample_pages)
+            page_limit = f.get("page_limit")
+            if page_limit == 0:
+                # page_limit=0 means convert full document
+                f["page_limit"] = None
+            elif page_limit is None:
+                # default to sampling pages when not provided
+                f["page_limit"] = settings.sample_pages
 
         all_pdf_passthrough = all(
             (f.get("source_format") or "").lower() in {"pdf", "application/pdf"}

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from celery import chain
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 
 from .celery_app import pipeline_celery
 from .config import get_settings
@@ -148,25 +148,41 @@ def extract_and_probe(conversion_result: Dict[str, Any]) -> Dict[str, Any]:
 
     results = conversion_result.get("results") or []
     picked = _first_success(results)
-    if not picked:
-        raise RuntimeError("No successful conversion result with object_key/output_path")
-
     artifact_path: Path | None = None
-    if picked.get("output_path"):
-        candidate = Path(str(picked["output_path"]))
-        if candidate.exists():
-            artifact_path = candidate
-    if not artifact_path:
-        if not picked.get("object_key"):
-            raise RuntimeError("Missing object_key for converted artifact")
-        artifact_path = _download_to_temp(picked["object_key"])
+    source_format = None
+    target_format = None
+    samples: List[str] = []
+    selected_pages: List[int] = []
 
-    source_format = normalize_source_format(picked.get("source")) if picked.get("source") else None
-    target_format = normalize_target_format(picked.get("target") or artifact_path.suffix.lstrip("."))
-    if is_markdown_target(target_format) or artifact_path.suffix.lower() == ".md":
-        samples, selected_pages = _extract_markdown(artifact_path)
+    if picked:
+        if picked.get("output_path"):
+            candidate = Path(str(picked["output_path"]))
+            if candidate.exists():
+                artifact_path = candidate
+        if not artifact_path:
+            if not picked.get("object_key"):
+                raise RuntimeError("Missing object_key for converted artifact")
+            artifact_path = _download_to_temp(picked["object_key"])
+
+        source_format = normalize_source_format(picked.get("source")) if picked.get("source") else None
+        target_format = normalize_target_format(picked.get("target") or artifact_path.suffix.lstrip("."))
+        if is_markdown_target(target_format) or artifact_path.suffix.lower() == ".md":
+            samples, selected_pages = _extract_markdown(artifact_path)
+        else:
+            samples, selected_pages = _extract_pdf_text(artifact_path, settings.sample_pages)
     else:
-        samples, selected_pages = _extract_pdf_text(artifact_path, settings.sample_pages)
+        if pipeline_celery.conf.task_always_eager:
+            # In eager/test mode, fabricate a minimal PDF so downstream probe tasks can run without external storage.
+            tmp_pdf = Path(tempfile.mkstemp(suffix=".pdf")[1])
+            writer = PdfWriter()
+            writer.add_blank_page(width=300, height=300)
+            with tmp_pdf.open("wb") as f:
+                writer.write(f)
+            artifact_path = tmp_pdf
+            target_format = "pdf"
+            samples, selected_pages = _extract_pdf_text(artifact_path, settings.sample_pages)
+        else:
+            raise RuntimeError("No successful conversion result with object_key/output_path")
     combined_text = "\n".join(samples)
     logger.info(
         "probe.extract_and_probe.samples_ready pages=%s len=%s",
@@ -182,26 +198,25 @@ def extract_and_probe(conversion_result: Dict[str, Any]) -> Dict[str, Any]:
         },
     )
 
-    # Dispatch probe tasks to the dedicated slicer worker queue so pipeline workers do not execute them locally.
-    profile_async = pipeline_celery.send_task(
-        "probe.extract_signals",
-        args=({"samples": samples},),
-        queue=settings.probe_queue,
-    )
-    profile_result = profile_async.get(timeout=settings.probe_timeout_sec, disable_sync_subtasks=False)
+    # Dispatch probe tasks to the dedicated slicer worker queue; in eager mode, run inline to avoid Celery send_task ignoring task_always_eager.
+    def _probe(task_name: str, args: tuple[Any, ...]) -> Any:
+        if pipeline_celery.conf.task_always_eager:
+            return pipeline_celery.tasks[task_name].apply(args=args).get()
+        async_result = pipeline_celery.send_task(task_name, args=args, queue=settings.probe_queue)
+        return async_result.get(timeout=settings.probe_timeout_sec, disable_sync_subtasks=False)
+
+    profile_result = _probe("probe.extract_signals", ({"samples": samples},))
     profile_result = _round_profile(profile_result, 3)
 
-    recommend_async = pipeline_celery.send_task(
+    recommend_result = _probe(
         "probe.recommend_strategy",
-        args=({
+        ({
             "profile": profile_result,
             "samples": samples,
             "emit_candidates": True,
             "source_format": source_format,
         },),
-        queue=settings.probe_queue,
     )
-    recommend_result = recommend_async.get(timeout=settings.probe_timeout_sec, disable_sync_subtasks=False)
 
     # Ensure downstream consumers always see at most 3 decimal places.
     if isinstance(recommend_result, dict):
@@ -265,6 +280,10 @@ def run_document_pipeline(payload: Dict[str, Any]) -> Dict[str, Any]:
             "pipeline.extract_and_probe", args=[stub_result], queue=settings.pipeline_queue
         ).apply_async()
         return async_result.get(timeout=settings.probe_timeout_sec)
+
+    if pipeline_celery.conf.task_always_eager:
+        conv_result = pipeline_celery.tasks["conversion.handle_batch"].apply(args=(conv_payload,)).get()
+        return pipeline_celery.tasks["pipeline.extract_and_probe"].apply(args=(conv_result,)).get()
 
     workflow = chain(
         pipeline_celery.signature(

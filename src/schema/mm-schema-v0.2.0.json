@@ -604,7 +604,6 @@
               }
             }
           },
-          “全文检索字段”：当前solr的内容。2个数组；
           "vector": {
             "type": "object",
             "description": "向量嵌入",

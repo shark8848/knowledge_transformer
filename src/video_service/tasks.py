@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
@@ -200,6 +201,40 @@ def _caption_frame(frame_url: str, prompt: str) -> str:
     return ""
 
 
+def _caption_frames_async(frames: List[Dict[str, Any]], prompt: str, timeout: int = 180) -> Dict[float, str]:
+    """Fire off caption tasks for all frames and then collect results in parallel."""
+
+    pending: Dict[float, Tuple[Any, Dict[str, Any]]] = {}
+    for f in frames:
+        url = f.get("url")
+        ts = f.get("timestamp")
+        if not url or ts is None:
+            continue
+        try:
+            async_res = mm_celery.send_task(
+                "mm.call",
+                args=[{"source": {"input_url": url, "kind": "image", "prompt": prompt}}],
+                queue=settings.celery.vision_queue,
+            )
+            pending[float(ts)] = (async_res, f)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Frame caption dispatch failed (ts=%s): %s", ts, exc)
+
+    captions: Dict[float, str] = {}
+    for ts in sorted(pending):
+        async_res, f = pending[ts]
+        try:
+            result = async_res.get(timeout=timeout, disable_sync_subtasks=False)
+            if isinstance(result, dict):
+                desc = result.get("text") or ""
+                if desc:
+                    f["description"] = desc
+                    captions[ts] = desc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Frame caption collect failed (ts=%s): %s", ts, exc)
+    return captions
+
+
 def _slice_video(video_path: Path, segments: List[Tuple[float, float]], base_prefix: str, workdir: Path) -> List[Dict[str, Any]]:
     _require_bin("ffmpeg")
     results: List[Dict[str, Any]] = []
@@ -290,6 +325,7 @@ def _build_manifest(
     frames: List[Dict[str, Any]],
     asr_results: List[Dict[str, Any]],
     frame_captions: Dict[float, str],
+    processing_time: float | None,
 ) -> Dict[str, Any]:
     kb_id = request.get("kb_id") or "default"
     doc_id = request.get("document_id") or task_id
@@ -352,7 +388,7 @@ def _build_manifest(
             "keyframes": keyframe_items,
             "processing": {
                 "status": "success",
-                "processing_time": None,
+                "processing_time": processing_time,
                 "pipeline_version": "video-service-1",
             },
         }
@@ -389,11 +425,26 @@ def _build_manifest(
     return manifest
 
 
+def _evenly_pick(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Pick items evenly up to limit to cover the range without biasing the head."""
+
+    if limit <= 0 or len(items) <= limit:
+        return items
+    step = max(1, round(len(items) / limit))
+    picked: List[Dict[str, Any]] = []
+    for idx in range(0, len(items), step):
+        picked.append(items[idx])
+        if len(picked) >= limit:
+            break
+    return picked
+
+
 @video_celery.task(name="video.process")
 def process_video(request: Dict[str, Any]) -> Dict[str, Any]:
     """Download video, slice, extract frames/audio, upload all artifacts, and emit mm-schema JSON."""
 
     task_id = request.get("task_id") or uuid4().hex
+    started_at = time.perf_counter()
     workdir = Path(tempfile.mkdtemp(prefix="video-mm-"))
     try:
         video_path = _materialize_media(request, workdir)
@@ -435,18 +486,31 @@ def process_video(request: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 asr_results.append({})
 
-        # Caption frames via multimodal (sample up to cap_limit frames)
-        cap_limit = max(1, settings.processing.frame_caption_max)
+        # Caption frames via multimodal (per-chunk selection to cover timeline)
+        cap_override = request.get("frame_caption_max")
         frame_prompt = request.get("frame_prompt") or "请用一句话描述画面主体与场景"
-        sampled_frames = frame_objs[:cap_limit]
-        frame_captions: Dict[float, str] = {}
-        for f in sampled_frames:
-            if not f.get("url"):
-                continue
-            desc = _caption_frame(f["url"], frame_prompt)
-            if desc:
-                f["description"] = desc
-                frame_captions[f.get("timestamp")] = desc
+        # Choose frames to caption per chunk, spread evenly to avoid only early frames.
+        frames_for_caption: List[Dict[str, Any]] = []
+        for start, end in segments:
+            frames_in_chunk = [f for f in frame_objs if start <= f.get("timestamp", 0.0) < end]
+            if cap_override is None:
+                cap_per_chunk = len(frames_in_chunk)  # default: caption all keyframes in the chunk
+            else:
+                cap_per_chunk = int(cap_override)
+                if cap_per_chunk <= 0:
+                    cap_per_chunk = len(frames_in_chunk)
+            frames_for_caption.extend(_evenly_pick(frames_in_chunk, cap_per_chunk))
+
+        # Deduplicate by timestamp to avoid duplicate caption calls when limits overlap.
+        unique_frames: Dict[float, Dict[str, Any]] = {}
+        for f in frames_for_caption:
+            ts = f.get("timestamp")
+            if ts is not None and ts not in unique_frames:
+                unique_frames[ts] = f
+
+        frame_captions: Dict[float, str] = _caption_frames_async(list(unique_frames.values()), frame_prompt)
+
+        total_processing_time = round(time.perf_counter() - started_at, 3)
 
         manifest = _build_manifest(
             task_id,
@@ -460,6 +524,7 @@ def process_video(request: Dict[str, Any]) -> Dict[str, Any]:
             frame_objs,
             asr_results,
             frame_captions,
+            total_processing_time,
         )
         manifest_path = workdir / "mm-schema.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
