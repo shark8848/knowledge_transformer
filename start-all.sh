@@ -33,4 +33,7 @@ run_script "$ROOT_DIR/start_multimodal.sh" "multimodal"
 # Video service depends on asr/multimodal availability.
 run_script "$ROOT_DIR/start_video.sh" "video"
 
+# MinerU OCR/structure service (optional standalone)
+run_script "$ROOT_DIR/start_mineru.sh" "mineru"
+
 echo "[start-all] Done." 

@@ -23,5 +23,6 @@ run_script "$ROOT_DIR/show_vector.sh" "vector"
 run_script "$ROOT_DIR/show_asr.sh" "asr"
 run_script "$ROOT_DIR/show_multimodal.sh" "multimodal"
 run_script "$ROOT_DIR/show_video.sh" "video"
+run_script "$ROOT_DIR/show_mineru.sh" "mineru"
 
 echo "[show-all] Done." 

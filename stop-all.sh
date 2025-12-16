@@ -23,5 +23,6 @@ run_script "$ROOT_DIR/stop_multimodal.sh" "multimodal"
 run_script "$ROOT_DIR/stop_asr.sh" "asr"
 run_script "$ROOT_DIR/stop_slicer.sh" "slicer"
 run_script "$ROOT_DIR/stop_converter.sh" "converter"
+run_script "$ROOT_DIR/stop_mineru.sh" "mineru"
 
 echo "[stop-all] Done." 
