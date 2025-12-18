@@ -92,95 +92,94 @@ def submit_job(doc_id, src_path, fmt):
     4) `recommend_task` 返回推荐策略和参数；
     5) 异常在各 task 内捕获并返回错误码，chain 将错误向上抛出供调用方处理。
 
-### 6.1 接口定义
+### 6.1 接口定义（对齐当前实现）
 
-- Celery 任务：
-  - `probe.extract_signals`：输入文档句柄，输出 `profile`（画像+抽样）。
-  - `probe.recommend_strategy`：输入 `profile`，输出推荐策略。
-- HTTP（示例包装）：`POST /api/v1/probe/recommend`，`Content-Type: application/json`，建议仅开放 HTTPS。
+- Celery 任务（由 `src/slicer_service/celery_app.py` 注册）：
+  - `probe.extract_signals`：输入文本探针样本，输出结构/文本画像。
+  - `probe.recommend_strategy`：输入画像（可选）+样本+分隔符配置，输出切片策略。
+- HTTP API（由 `src/slicer_service/api/routes.py` 暴露）：
+  - `POST /probe/profile`：计算探针画像。
+  - `POST /probe/recommend_strategy`：返回策略推荐（同步响应，无 task_id）。
 
-
-
-**Celery 任务入参（probe.recommend_strategy）**
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| profile.heading_ratio/list_ratio/table_ratio/code_ratio/math_ratio/... | object | 是 | 画像特征，含结构/文本/噪声指标与抽样摘要 |
-| profile.samples | string[] | 否 | 探针文本样本（用于分隔符检测/LLM 先验） |
-| custom.enable | bool | 否 | 是否启用自定义分隔符策略 |
-| custom.delimiters | string[] | 否 | 文本/正则分隔符列表 |
-| custom.min_segments | int | 否 | 分隔符命中阈值 |
-| custom.min_segment_len | int | 否 | 最小段长 |
-| custom.max_segment_len | int | 否 | 最大段长（超长再拆分） |
-| emit_candidates | bool | 否 | 是否返回候选打分表 |
-
-**Celery 任务出参（probe.recommend_strategy）**
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| strategy_id | string | 选中的策略 ID（如 `heading_block_length_split` 等） |
-| params | object | 策略参数（target_length/overlap/preserve_tables 等） |
-| candidates | object? | `emit_candidates=true` 时返回各策略得分 |
-| delimiter_hits | int? | 分隔符命中数量（启用自定义分隔符时） |
-| profile | object | 回传画像（便于链路观测） |
-| notes | string | 备注，保持“仅推荐，不执行转换/切片”提示 |
-| error_code | string? | 错误码（失败时出现） |
-| message | string? | 错误描述（失败时出现） |
 
 **Celery 任务入参（probe.extract_signals）**
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| doc_handle | object | 是 | 标准化文档句柄/页流（由转换任务产出） |
-| sample_pages | int? | 否 | 抽样页数上限，可选覆盖默认（如头/中/尾各 1~2 页） |
-| timeout_ms | int? | 否 | 探针超时设置，可选 |
+| samples | string[] | 是 | 预处理后的文本探针样本（如 PDF 抽样页文本、Markdown 块等） |
 
 **Celery 任务出参（probe.extract_signals）**
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| profile | object | 画像特征（heading_ratio/list_ratio/table_ratio/code_ratio/math_ratio 等） |
-| samples | string[] | 抽样文本/块摘要，用于分隔符检测或先验分类 |
-| limits | object? | 限制信息（如 media_slice_supported 等） |
-| error_code | string? | 错误码（失败时出现） |
-| message | string? | 错误描述（失败时出现） |
+| heading_ratio/list_ratio/table_ratio/code_ratio/p90_para_len/p50_para_len/digit_symbol_ratio | number | 基础画像特征 |
+| samples | string[] | 回传探针样本（便于链路观测） |
 
-**HTTP Header（可选鉴权）**
+**Celery 任务入参（probe.recommend_strategy）**
 
-| Header | 必填 | 说明 |
-| --- | --- | --- |
-| X-Appid | 是（当鉴权开启） | 应用标识 |
-| X-Key | 是（当鉴权开启） | 访问密钥 |
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| profile | object | 否 | 画像特征；未提供时会基于 samples 现算 |
+| samples | string[] | 否 | 探针文本样本；缺省空列表 |
+| custom.enable | bool | 否 | 是否启用自定义分隔符策略，默认 false |
+| custom.delimiters | string[] | 否 | 分隔符列表 |
+| custom.min_segments | int | 否 | 命中阈值，默认 5 |
+| custom.min_segment_len | int | 否 | 最小段长，默认 30 |
+| custom.max_segment_len | int | 否 | 最大段长，默认 800 |
+| custom.overlap_ratio | float | 否 | 自定义分隔符策略的窗口重叠，可选 |
+| emit_candidates | bool | 否 | 是否返回各策略得分，默认 false |
+| source_format | string | 否 | 源格式/扩展名（表格/代码/幻灯片将触发格式优先路由） |
 
-**HTTP Body 入参**
-
-| 字段 | 类型 | 必填 | 默认 | 说明 |
-| --- | --- | --- | --- | --- |
-| doc_id | string | 是 | - | 文档唯一标识 |
-| src_path | string | 是 | - | 源文件路径/URL（服务可访问） |
-| fmt | string | 是 | - | 源文件格式（pdf/docx/html/md/pptx/txt 等） |
-| emit_candidates | bool | 否 | false | 是否返回候选策略打分 |
-| trace_id | string | 否 | 自动生成 | 链路追踪 ID |
-| priority | int | 否 | 0 | 任务优先级（可选） |
-| custom.enable | bool | 否 | false | 是否启用自定义分隔符策略 |
-| custom.delimiters | string[] | 否 | [] | 自定义文本/正则分隔符列表 |
-| custom.min_segments | int | 否 | 5 | 分隔符命中阈值 |
-| custom.min_segment_len | int | 否 | 30 | 最小段长 |
-| custom.max_segment_len | int | 否 | 800 | 最大段长，超长再拆分 |
-
-**HTTP 出参（同步或异步回执）**
+**Celery 任务出参（probe.recommend_strategy）**
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| task_id | string | 异步任务 ID（若以 Celery 异步返回） |
-| strategy_id | string | 选中的策略 ID |
-| params | object | 策略参数（target_length/overlap/preserve_tables 等） |
-| candidates | object? | 仅当 `emit_candidates=true` 返回打分表 |
-| delimiter_hits | int? | 分隔符命中数量（启用自定义分隔符时） |
-| profile | object | 画像特征（结构/文本/噪声指标，含采样摘要） |
-| notes | string | 备注，保持“仅推荐，不执行转换/切片”提示 |
-| error_code | string? | 错误码（失败时出现） |
-| message | string? | 错误描述（失败时出现） |
+| strategy_id | string | 推荐的策略 ID（heading_block_length_split 等） |
+| params | object | 策略参数（target_length/overlap_ratio/表格/代码/幻灯片专用参数） |
+| candidates | object? | `emit_candidates=true` 时的得分表 |
+| delimiter_hits | int | 分隔符命中数量 |
+| profile | object | 回传画像（已四舍五入，去除 para_lengths） |
+| notes | string | 备注/路由说明 |
+
+**HTTP Header（鉴权）**
+
+| Header | 必填 | 说明 |
+| --- | --- | --- |
+| X-Appid | 是（若开启鉴权） | 应用标识 |
+| X-Key | 是（若开启鉴权） | 访问密钥 |
+
+**HTTP Body 入参：POST /probe/profile**
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| samples | string[] | 是 | 探针样本文本 |
+
+**HTTP 返回：POST /probe/profile**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| profile | object | 画像特征（同 Celery 出参，四舍五入精度 3 位） |
+
+**HTTP Body 入参：POST /probe/recommend_strategy**
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| samples | string[] | 是 | - | 探针样本文本 |
+| custom | object | 否 | null | 分隔符配置（enable/delimiters/min_segments/min_segment_len/max_segment_len/overlap_ratio） |
+| emit_candidates | bool | 否 | false | 是否返回候选得分 |
+| source_format | string | 否 | null | 源格式/扩展名，用于格式先验路由 |
+
+**HTTP 返回：POST /probe/recommend_strategy**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| recommendation | object | 
+| ↳ strategy_id | string | 推荐策略 ID |
+| ↳ params | object | 策略参数 |
+| ↳ candidates | object? | 候选得分（可选） |
+| ↳ delimiter_hits | int | 分隔符命中数量 |
+| ↳ profile | object | 画像特征（3 位精度，去除 para_lengths） |
+| ↳ notes | string | 备注/路由提示 |
 
 ## 7. 智能自适应切片设计（推荐 + 切片执行）
 - **目标**：在已有推荐能力基础上自动完成切片执行，适配不同文档类型与场景；保持幂等、可观测，可在 Celery 中独立服务化。

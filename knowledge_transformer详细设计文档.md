@@ -8,7 +8,7 @@
 2. **资源与安全限制**：按格式与全局定义文件大小/批量上限，API 层使用 appid/key 鉴权，支持 CLI 管理。
 3. **错误码体系**：集中式错误码映射 HTTP 状态与业务状态，支持多语言描述，方便排障与对接（详见文末《附录：错误码总览》）。
 4. **插件化架构**：转换逻辑以插件形式装配，可运行时发现新插件并快速扩展支持的格式。
-5. **细粒度转换控制**：文档格式支持 `page_limit` 截断 PDF 页数；音视频支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
+5. **细粒度转换控制**：文档格式支持 `page_limit` 截断 PDF 页数（`0/null`=全文，未传则采用配置的 `sample_pages` 抽样）；音视频支持 `duration_seconds` 裁剪时长，API 校验后透传到插件执行。
 6. **可观测性**：结构化日志、Tracing ID、Prometheus 指标、Flower 监控以及健康检查接口，提升可运维性。
 7. **异步高并发处理**：所有任务通过 Celery 执行，提供 Webhook、Result Backend、对象存储下载、预签名 URL 等多种结果获取方式，显著降低 API 阻塞。
 
@@ -195,7 +195,7 @@
 | Pipeline `submit_conversion_chord` | `file_batches[][]`, `priority` | `chord_id`（并行+聚合） |
 
 
-`page_limit` 仅适用于 `doc/docx/html/ppt/pptx`，生成 PDF 后保留前 N 页；`duration_seconds` 仅适用于音视频/动图（`wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif`），两者互斥。`mode` 默认 `async` 返回 202 入队；`sync` 单文件同步执行直接返回结果（建议小体积），超时直接失败。不支持的格式或非法参数会在错误信息中携带源文件定位（`input_url`/`object_key`/`filename`），便于排查。
+`page_limit` 仅适用于 `doc/docx/html/ppt/pptx`，生成 PDF 后保留前 N 页（`0/null` 表示不裁剪全文，未提供则使用配置的 `sample_pages` 抽样）；`duration_seconds` 仅适用于音视频/动图（`wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif`），两者互斥。`mode` 默认 `async` 返回 202 入队；`sync` 单文件同步执行直接返回结果（建议小体积），超时直接失败。不支持的格式或非法参数会在错误信息中携带源文件定位（`input_url`/`object_key`/`filename`），便于排查。
 
 **API 请求/响应示例（含同步模式与错误源定位）：**
 
