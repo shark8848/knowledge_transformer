@@ -55,7 +55,11 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN if [ "${USE_VENV}" = "true" ]; then . /opt/venv/bin/activate; fi \
     && pip install --upgrade pip \
-    && pip install --no-cache-dir '.[converter]' pytest
+    && pip install --no-cache-dir \
+        '.[converter]' \
+        pytest pytest-asyncio pytest-html pytest-metadata \
+        huggingface-hub tiktoken dashscope boto3 \
+        python-docx python-pptx pypdf lxml pillow openpyxl xlsxwriter
 
 # ---------- Runtime without heavy system deps ----------
 FROM python-base AS runtime-common
@@ -74,7 +78,11 @@ COPY docker/entrypoint.sh ./entrypoint.sh
 RUN set -e \
     && if [ "${USE_VENV}" != "true" ]; then \
          pip install --upgrade pip \
-                 && pip install --no-cache-dir '.[converter]' pytest; \
+        && pip install --no-cache-dir \
+            '.[converter]' \
+            pytest pytest-asyncio pytest-html pytest-metadata \
+            huggingface-hub tiktoken dashscope boto3 \
+            python-docx python-pptx pypdf lxml pillow openpyxl xlsxwriter; \
        fi \
     && chmod +x /app/entrypoint.sh \
     && find /app -maxdepth 1 \( -name "start_*.sh" -o -name "stop_*.sh" -o -name "show_*.sh" \) -print0 | xargs -0 -r chmod +x
