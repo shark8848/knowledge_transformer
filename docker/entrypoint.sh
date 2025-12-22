@@ -5,10 +5,19 @@ export PATH="/opt/venv/bin:$PATH"
 
 # Load runtime overrides if provided inside the container
 if [ -f /app/.env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source /app/.env
-  set +a
+  echo "Sourcing environment from /app/.env"
+  if command -v source >/dev/null 2>&1; then
+    set -a
+    # shellcheck disable=SC1091
+    source /app/.env
+    set +a
+  else
+    # Fallback for shells without 'source'
+    set -a
+    # shellcheck disable=SC1091
+    . /app/.env
+    set +a
+  fi
 fi
 
 # Default config file location
