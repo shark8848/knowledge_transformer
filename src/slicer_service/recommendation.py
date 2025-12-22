@@ -10,6 +10,12 @@ FORMAT_CODE = {"py", "c", "cpp", "java", "js", "ts", "go", "rs", "rb", "php", "s
 FORMAT_SLIDE = {"ppt", "pptx"}
 FORMAT_TEXT_BIASED_HEADING = {"doc", "docx", "pdf", "html", "htm"}
 
+# 统一对外的切分模式（仅三类）
+MODE_DIRECT = "direct_delimiter"
+MODE_SEMANTIC = "semantic_sentence"
+MODE_HIERARCHICAL = "hierarchical_heading"
+MODE_ID_MAP = {MODE_DIRECT: 1, MODE_SEMANTIC: 2, MODE_HIERARCHICAL: 3}
+
 
 def _normalize_fmt(fmt: str | None) -> str:
     return (fmt or "").strip().lower().lstrip(".")
@@ -249,42 +255,80 @@ def recommend_strategy(
     samples_for_hits = samples or profile.get("samples") or []
     delimiter_hits = detect_delimiter_hits(samples_for_hits, cfg.get("delimiters") or [])
 
+    def _build_response(
+        *,
+        strategy_id: str,
+        mode: str,
+        params: Dict[str, Any],
+        candidates: Dict[str, Any] | None,
+        delimiter_hits_val: int,
+        profile_out: Dict[str, Any],
+        notes: str,
+        segments: Any = None,
+        extra_note: str | None = None,
+    ) -> Dict[str, Any]:
+        """统一输出：限制为三类 mode，并补充数字 id 与描述元信息。"""
+        mode_desc = {
+            MODE_DIRECT: "分隔符直切，命中即用",
+            MODE_SEMANTIC: "语义/句级分段，适合结构信号弱文本",
+            MODE_HIERARCHICAL: "父子层级分段，基于标题/列表/长段落",
+        }.get(mode, "")
+        full_notes = notes + (f"|{extra_note}" if extra_note else "")
+        return {
+            "strategy_id": strategy_id,
+            "mode": mode,
+            "mode_id": MODE_ID_MAP.get(mode),
+            "mode_desc": mode_desc,
+            "params": params,
+            "candidates": _round_scores(candidates, 3) if candidates else None,
+            "delimiter_hits": delimiter_hits_val,
+            "profile": profile_out,
+            "notes": full_notes,
+            "segments": segments,
+        }
+
     # 硬路由：格式先验优先（表格/代码/幻灯片）。
     if fmt_norm in FORMAT_TABLE:
         params = estimate_params(profile, "table_batch", cfg)
         scores = {"table_batch": 1.0} if emit_candidates else None
-        return {
-            "strategy_id": "table_batch",
-            "params": params,
-            "candidates": scores,
-            "delimiter_hits": delimiter_hits,
-            "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-            "notes": "格式优先: 表格格式优先使用表格切片",
-        }
+        return _build_response(
+            strategy_id="table_batch",
+            mode=MODE_HIERARCHICAL,
+            params=params,
+            candidates=scores,
+            delimiter_hits_val=delimiter_hits,
+            profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+            notes="格式优先: 表格格式优先使用表格切片",
+            extra_note="mapped_to_hierarchical",
+        )
 
     if fmt_norm in FORMAT_CODE:
         params = estimate_params(profile, "code_log_block", cfg)
         scores = {"code_log_block": 1.0} if emit_candidates else None
-        return {
-            "strategy_id": "code_log_block",
-            "params": params,
-            "candidates": scores,
-            "delimiter_hits": delimiter_hits,
-            "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-            "notes": "格式优先: 代码/日志格式优先使用代码块切片",
-        }
+        return _build_response(
+            strategy_id="code_log_block",
+            mode=MODE_HIERARCHICAL,
+            params=params,
+            candidates=scores,
+            delimiter_hits_val=delimiter_hits,
+            profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+            notes="格式优先: 代码/日志格式优先使用代码块切片",
+            extra_note="mapped_to_hierarchical",
+        )
 
     if fmt_norm in FORMAT_SLIDE:
         params = estimate_params(profile, "slide_block_textbox_merge", cfg)
         scores = {"slide_block_textbox_merge": 1.0} if emit_candidates else None
-        return {
-            "strategy_id": "slide_block_textbox_merge",
-            "params": params,
-            "candidates": scores,
-            "delimiter_hits": delimiter_hits,
-            "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-            "notes": "格式优先: 幻灯片优先合并文本框",
-        }
+        return _build_response(
+            strategy_id="slide_block_textbox_merge",
+            mode=MODE_HIERARCHICAL,
+            params=params,
+            candidates=scores,
+            delimiter_hits_val=delimiter_hits,
+            profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+            notes="格式优先: 幻灯片优先合并文本框",
+            extra_note="mapped_to_hierarchical",
+        )
 
     def _score_profile(current_profile: Dict[str, Any], current_delim_hits: int) -> tuple[str, Dict[str, float], str | None]:
         """对单个 profile 打分，返回策略、分数字典（仅数值），以及可选备注。"""
@@ -297,11 +341,11 @@ def recommend_strategy(
         if cfg.get("enable") and current_delim_hits >= cfg.get("min_segments", 5):
             return "custom_delimiter_split", {"custom_delimiter_split": 1.0}, None
         if table_ratio > thresholds["t1_table"]:
-            return "table_batch", {"table_batch": table_ratio}, None
+            return "table_batch", {"table_batch": table_ratio}, "table_detected"
         if p90_len >= 800 or (p90_len >= 600 and heading_ratio > 0.01):
             return "heading_block_length_split", {"heading_block_length_split": 1.0}, "forced_long_paragraph_override"
         if code_ratio > thresholds["t2_code"]:
-            return "code_log_block", {"code_log_block": code_ratio}, None
+            return "code_log_block", {"code_log_block": code_ratio}, "code_detected"
 
         w_h = weights["w_h"]
         w_l = weights["w_l"]
@@ -352,14 +396,16 @@ def recommend_strategy(
                 max_table_ratio = max(float(p.get("table_ratio", 0.0)) for p in table_hit_profiles)
                 params = estimate_params(profile, "table_batch", cfg)
                 scores_out = {"table_batch": _round_value(max_table_ratio, 3)} if emit_candidates else None
-                return {
-                    "strategy_id": "table_batch",
-                    "params": params,
-                    "candidates": scores_out,
-                    "delimiter_hits": delimiter_hits,
-                    "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-                    "notes": "推荐的策略仅供参考(跨页累计打分)|table_detected",
-                }
+                return _build_response(
+                    strategy_id="table_batch",
+                    mode=MODE_HIERARCHICAL,
+                    params=params,
+                    candidates=scores_out,
+                    delimiter_hits_val=delimiter_hits,
+                    profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+                    notes="推荐的策略仅供参考(跨页累计打分)",
+                    extra_note="table_detected|mapped_to_hierarchical",
+                )
 
             agg_scores: Dict[str, float] = {}
             max_delim_hits = 0
@@ -378,25 +424,35 @@ def recommend_strategy(
             strategy = max(compressed_scores, key=compressed_scores.get)
             scores_out = _round_scores(compressed_scores, 3) if emit_candidates else None
             params = estimate_params(profile, strategy, cfg)
-            return {
-                "strategy_id": strategy,
-                "params": params,
-                "candidates": scores_out,
-                "delimiter_hits": max_delim_hits,
-                "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-                "notes": "推荐的策略仅供参考(跨页累计打分)" + (f"|{note_text}" if note_text else ""),
-            }
+            mode_for_strategy = MODE_DIRECT if strategy == "custom_delimiter_split" else (
+                MODE_HIERARCHICAL if strategy == "heading_block_length_split" else MODE_SEMANTIC
+            )
+            return _build_response(
+                strategy_id=strategy,
+                mode=mode_for_strategy,
+                params=params,
+                candidates=scores_out,
+                delimiter_hits_val=max_delim_hits,
+                profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+                notes="推荐的策略仅供参考(跨页累计打分)",
+                extra_note=note_text,
+            )
 
     # 单一或聚合样本：按原逻辑打分
     best_strategy, raw_scores, note_text = _score_profile(profile, delimiter_hits)
     scores = _round_scores(raw_scores, 3) if emit_candidates else None
     params = estimate_params(profile, best_strategy, cfg)
-    return {
-        "strategy_id": best_strategy,
-        "params": params,
-        "candidates": _round_scores(scores, 3),
-        "delimiter_hits": delimiter_hits,
-        "profile": _round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
-        "notes": "推荐的策略仅供参考" + (f"|{note_text}" if note_text else ""),
-    }
+    mode_for_strategy = MODE_DIRECT if best_strategy == "custom_delimiter_split" else (
+        MODE_HIERARCHICAL if best_strategy == "heading_block_length_split" else MODE_SEMANTIC
+    )
+    return _build_response(
+        strategy_id=best_strategy,
+        mode=mode_for_strategy,
+        params=params,
+        candidates=scores,
+        delimiter_hits_val=delimiter_hits,
+        profile_out=_round_profile({k: v for k, v in profile.items() if k != "para_lengths"}, 3),
+        notes="推荐的策略仅供参考",
+        extra_note=note_text,
+    )
 

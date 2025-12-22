@@ -55,7 +55,16 @@ def _register_stub_tasks(fake_pdf: Path):
 
     @pipeline_celery.task(name="probe.recommend_strategy")
     def _fake_recommend(payload):  # type: ignore
-        return {"strategy_id": "sentence_split_sliding", "delimiter_hits": 0, "params": {}}
+        return {
+            "strategy_id": "sentence_split_sliding",
+            "mode": "semantic_sentence",
+            "mode_id": 2,
+            "mode_desc": "语义/句级分段，适合结构信号弱文本",
+            "delimiter_hits": 0,
+            "params": {},
+            "candidates": {"sentence_split_sliding": 0.5},
+            "notes": "stub",
+        }
 
     yield
 

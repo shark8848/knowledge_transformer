@@ -37,11 +37,15 @@ class ProfileResponse(BaseModel):
 
 class StrategyRecommendation(BaseModel):
     strategy_id: str
+    mode: str
+    mode_id: int | None = None
+    mode_desc: str | None = None
     params: Dict[str, Any]
     candidates: Dict[str, float] | None = None
     delimiter_hits: int = 0
     profile: ProfileFeatures
     notes: str | None = None
+    segments: Any | None = None
 
 
 class StrategyRecommendRequest(BaseModel):

@@ -43,11 +43,16 @@ curl -X POST http://localhost:8100/api/v1/probe/recommend_strategy \
 - Metrics: `GET http://localhost:8100/metrics` （Prometheus 格式，默认 9093 暴露）
 - Flower: `http://localhost:5556`
 
-## 6) 典型返回
+## 6) 典型返回（仅三类模式）
+输出统一包含 `mode`/`mode_id`/`mode_desc`，仅三类：`direct_delimiter`(1)、`semantic_sentence`(2)、`hierarchical_heading`(3)。
+
 ```json
 {
   "recommendation": {
     "strategy_id": "custom_delimiter_split",
+    "mode": "direct_delimiter",
+    "mode_id": 1,
+    "mode_desc": "分隔符直切，命中即用",
     "params": {
       "target_length": 220,
       "overlap_ratio": 0.15,
@@ -55,10 +60,20 @@ curl -X POST http://localhost:8100/api/v1/probe/recommend_strategy \
       "min_segment_len": 30,
       "max_segment_len": 800
     },
-    "candidates": {"custom_delimiter_split": 1.0, "delimiter_hits": 6.0},
+    "candidates": {"custom_delimiter_split": 1.0},
     "delimiter_hits": 6,
-    "profile": {"heading_ratio": 0.0, "list_ratio": 0.0, "table_ratio": 0.0, "code_ratio": 0.0, "p90_para_len": 24, "p50_para_len": 24, "digit_symbol_ratio": 0.75, "samples": ["a---b---c---d---e---f"]},
-    "notes": "仅推荐，不执行转换/切片"
+    "profile": {
+      "heading_ratio": 0.0,
+      "list_ratio": 0.0,
+      "table_ratio": 0.0,
+      "code_ratio": 0.0,
+      "p90_para_len": 24,
+      "p50_para_len": 24,
+      "digit_symbol_ratio": 0.75,
+      "samples": ["a---b---c---d---e---f"]
+    },
+    "notes": "分隔符命中触发",
+    "segments": null
   }
 }
 ```

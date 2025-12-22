@@ -47,10 +47,39 @@ def _source_locator(file: Any) -> str:
     return file.input_url or file.object_key or file.filename or f"inline.{file.source_format}"
 
 
+def _default_target_for_source(source: str, settings: Settings) -> str | None:
+    src = source.lower()
+    for plugin in REGISTRY.list():
+        if plugin.source_format.lower() == src:
+            return plugin.target_format
+    for fmt in settings.convert_formats:
+        if fmt.source.lower() == src:
+            return fmt.target
+    return None
+
+
+def _apply_default_targets(payload: ConversionRequest, settings: Settings) -> None:
+    """Populate missing target_format using the first registered/configured mapping."""
+
+    for file in payload.files:
+        if file.target_format:
+            continue
+        inferred = _default_target_for_source(file.source_format, settings)
+        if not inferred:
+            locator = _source_locator(file)
+            raise_error(
+                "ERR_FORMAT_UNSUPPORTED",
+                detail=f"No default target configured for {file.source_format} (source={locator})",
+            )
+        file.target_format = inferred
+
+
 def _validate_request(payload: ConversionRequest, settings: Settings) -> None:
     limits = settings.file_limits
     files = payload.files
     mode = payload.mode.lower() if payload.mode else "async"
+
+    _apply_default_targets(payload, settings)
 
     if not files:
         raise_error("ERR_FORMAT_UNSUPPORTED")

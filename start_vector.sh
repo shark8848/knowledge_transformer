@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 RUN_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
 FLOWER_PORT="${VECTOR_FLOWER_PORT:-5562}"
@@ -27,14 +26,20 @@ mkdir -p "$RUN_DIR" "$LOG_DIR"
 export VECTOR_celery__broker_url="${VECTOR_celery__broker_url:-redis://localhost:6379/0}"
 export VECTOR_celery__result_backend="${VECTOR_celery__result_backend:-redis://localhost:6379/1}"
 
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[vector-start] Missing executable: $1" >&2
-    exit 1
-  fi
+SCRIPT_TAG="vector-start"
+resolve_bin() {
+  local name="$1"
+  for cand in "/opt/venv/bin/$name" "$ROOT_DIR/.venv/bin/$name" "$(command -v "$name" 2>/dev/null)"; do
+    if [[ -n "$cand" && -x "$cand" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "[$SCRIPT_TAG] Missing executable: $name" >&2
+  exit 1
 }
 
-require_bin "$VENV_BIN/celery"
+CELERY=$(resolve_bin celery)
 
 is_running() {
   local pid_file="$1"
@@ -61,9 +66,9 @@ start_component() {
 }
 
 start_component "Vector Worker" "$RUN_DIR/vector-worker.pid" "$LOG_DIR/vector-worker.log" \
-  "$VENV_BIN/celery" -A vector_service.celery_app:vector_celery worker -l "$CELERY_LOG_LEVEL" -Q "$VECTOR_WORKER_QUEUES"
+  "$CELERY" -A vector_service.celery_app:vector_celery worker -l "$CELERY_LOG_LEVEL" -Q "$VECTOR_WORKER_QUEUES"
 
 start_component "Vector Flower" "$RUN_DIR/vector-flower.pid" "$LOG_DIR/vector-flower.log" \
-  "$VENV_BIN/celery" -A vector_service.celery_app:vector_celery flower --port="$FLOWER_PORT"
+  "$CELERY" -A vector_service.celery_app:vector_celery flower --port="$FLOWER_PORT"
 
 echo "[vector-start] Vector components launched. Logs: $LOG_DIR"

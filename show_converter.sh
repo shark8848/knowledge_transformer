@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 CONFIG_FILE="${RAG_CONFIG_FILE:-$ROOT_DIR/config/settings.yaml}"
 RUN_DIR="$ROOT_DIR/.run"
 API_PORT="${API_PORT:-8000}"
@@ -12,14 +11,20 @@ API_DOCS_PORT="${API_DOCS_PORT:-8090}"
 PYTHONPATH="$ROOT_DIR/src"
 export PYTHONPATH
 
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[converter-show] Missing executable: $1" >&2
-    exit 1
-  fi
+SCRIPT_TAG="converter-show"
+resolve_bin() {
+  local name="$1"
+  for cand in "/opt/venv/bin/$name" "$ROOT_DIR/.venv/bin/$name" "$(command -v "$name" 2>/dev/null)"; do
+    if [[ -n "$cand" && -x "$cand" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "[$SCRIPT_TAG] Missing executable: $name" >&2
+  exit 1
 }
 
-require_bin "$VENV_BIN/python"
+PYTHON=$(resolve_bin python)
 
 is_running() {
   local pid_file="$1"
@@ -44,7 +49,7 @@ check_http() {
 }
 
 check_redis() {
-  "$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
+  "$PYTHON" - "$CONFIG_FILE" <<'PY'
 import sys
 from urllib.parse import urlparse
 import redis
@@ -68,7 +73,7 @@ PY
 }
 
 check_minio() {
-  "$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
+  "$PYTHON" - "$CONFIG_FILE" <<'PY'
 import sys
 from urllib.parse import urlparse
 from minio import Minio
@@ -95,7 +100,7 @@ PY
 }
 
 celery_workers() {
-  "$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
+  "$PYTHON" - "$CONFIG_FILE" <<'PY'
 import sys
 from rag_converter.config import Settings
 from rag_converter.celery_app import celery_app
@@ -120,7 +125,7 @@ printf "%-20s %s\n" "APIDocs" "$(is_running "$RUN_DIR/api-docs.pid")"
 printf "%-20s %s\n" "FastAPI /healthz" "$(check_http "http://127.0.0.1:${API_PORT}/healthz")"
 printf "%-20s %s\n" "API docs /" "$(check_http "http://127.0.0.1:${API_DOCS_PORT}/")"
 
-PROM_PORT=$("$VENV_BIN/python" - "$CONFIG_FILE" <<'PY'
+PROM_PORT=$("$PYTHON" - "$CONFIG_FILE" <<'PY'
 import sys
 from rag_converter.config import Settings
 print(Settings.from_source(config_file=sys.argv[1]).monitoring.prometheus_port)

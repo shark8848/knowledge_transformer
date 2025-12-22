@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 RUN_DIR="$ROOT_DIR/.run"
 FLOWER_PORT="${VECTOR_FLOWER_PORT:-5562}"
 export PYTHONPATH="$ROOT_DIR/src"
@@ -14,16 +13,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   source "$ROOT_DIR/.env"
   set +o allexport
   FLOWER_PORT="${VECTOR_FLOWER_PORT:-$FLOWER_PORT}"
-fi
-
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[vector-show] Missing executable: $1" >&2
-    exit 1
-  fi
 }
-
-require_bin "$VENV_BIN/python"
 
 is_running() {
   local pid_file="$1"

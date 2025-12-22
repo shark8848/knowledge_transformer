@@ -40,7 +40,6 @@ logs/
 
 # Local config & secrets
 secrets/
-config/settings.yaml
 *.local.yaml
 
 # Temporary files

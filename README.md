@@ -165,6 +165,34 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
 | `http://<host>:9092/metrics` | GET | Prometheus 指标（Worker 进程） | ✗ 无需 |
 | `http://<host>:5555` | GET | Celery Flower 监控 UI | ✗ 无需 |
 
+### 默认目标格式映射
+
+未显式传入 `target_format` 时，服务会按源格式选择首个已注册/配置的目标格式（插件注册优先，其次 `config/settings.yaml` 中的顺序）。当前默认映射：
+
+| 源格式 | 默认目标 |
+|-------|---------|
+| doc | docx |
+| docx | pdf |
+| ppt | pdf |
+| pptx | pdf |
+| html | pdf |
+| svg | png |
+| gif | mp4 |
+| webp | png |
+| wav | mp3 |
+| flac | mp3 |
+| ogg | mp3 |
+| aac | mp3 |
+| avi | mp4 |
+| mov | mp4 |
+| mkv | mp4 |
+| webm | mp4 |
+| mpeg | mp4 |
+| flv | mp4 |
+| ts | mp4 |
+| m4v | mp4 |
+| 3gp | mp4 |
+
 ### 1. POST /api/v1/convert - 提交转换任务
 
 提交一个或多个文件的批量转换任务，系统将**异步处理**并可选通过 webhook 回调结果。
@@ -250,7 +278,7 @@ Content-Type: application/json
 | `storage` | object | ✗ | 对象存储覆盖信息；未提供时使用服务端缺省配置 |
 | `files` | array | ✓ | 待转换文件列表 |
 | `files[].source_format` | string | ✓ | 源格式，如 `doc`、`svg`、`wav` |
-| `files[].target_format` | string | ✓ | 目标格式，如 `docx`、`png`、`mp3` |
+| `files[].target_format` | string | ✗ | 目标格式，如 `docx`、`png`、`mp3`；可省略，省略时按默认映射选择 |
 | `files[].input_url` | string | ✗ | 文件下载 URL（与 `object_key`、`base64_data` 三选一） |
 | `files[].object_key` | string | ✗ | 对象存储键名（与 `input_url`、`base64_data` 三选一） |
 | `files[].base64_data` | string (base64) | ✗ | 内联内容（富文本/二进制）base64 字符串，便于直接传输小文件 |

@@ -2,20 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 RUN_DIR="$ROOT_DIR/.run"
 API_PORT="${ASR_API_PORT:-8200}"
 FLOWER_PORT="${ASR_FLOWER_PORT:-5558}"
 export PYTHONPATH="$ROOT_DIR/src"
-
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[asr-show] Missing executable: $1" >&2
-    exit 1
-  fi
-}
-
-require_bin "$VENV_BIN/python"
 
 is_running() {
   local pid_file="$1"

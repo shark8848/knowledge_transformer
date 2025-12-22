@@ -66,3 +66,9 @@ celerybeat.pid
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Docker images
+docker/images/*.tar
+
+# Test artifacts
+tests/artifacts/

@@ -32,6 +32,17 @@ class BailianSettings(BaseModel):
     request_timeout_sec: int = 60
 
 
+class TeamshubSettings(BaseModel):
+    token: Optional[str] = None
+    api_base: str = (
+        "https://aicp.teamshub.com/ai-paas/ai-open/sitech/aiopen/stream/aliyun-Qwen3-32B-developing-ws/v1/chat/completions"
+    )
+    model: str = "qwen3-32b"
+    stream: bool = True
+    enable_thinking: bool = False
+    request_timeout_sec: int = 60
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LLM_",
@@ -44,9 +55,11 @@ class Settings(BaseSettings):
     service_name: str = "llm-service"
     api_version: str = "v1"
     base_url: str = "/api/v1"
+    default_provider: str = "bailian"
     api_auth: APIAuthSettings = APIAuthSettings()
     celery: CeleryQueueSettings = CeleryQueueSettings()
     bailian: BailianSettings = BailianSettings()
+    teamshub: TeamshubSettings = TeamshubSettings()
 
 
 @lru_cache

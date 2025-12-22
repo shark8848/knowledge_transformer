@@ -28,20 +28,22 @@ class GifToMp4Plugin(ConversionPlugin):
             "-y",
             "-i",
             str(input_path),
+            "-vf",
+            "scale=ceil(iw/2)*2:ceil(ih/2)*2",
             "-movflags",
             "faststart",
             "-pix_fmt",
             "yuv420p",
-            str(output_path),
         ]
+
         # Support optional duration trimming via payload.metadata['duration_seconds']
         duration = None
         if payload.metadata:
             duration = payload.metadata.get("duration_seconds")
         if duration:
-            # Insert -t <duration> before the output path (just after input/options)
-            cmd.insert(6, str(duration))
-            cmd.insert(6, "-t")
+            cmd.extend(["-t", str(duration)])
+
+        cmd.append(str(output_path))
 
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

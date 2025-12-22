@@ -31,10 +31,14 @@ def test_probe_recommend_strategy_task_custom_and_candidates():
     assert result["strategy_id"] == "custom_delimiter_split"
     assert result["delimiter_hits"] >= 2
     assert result["candidates"]  # should include candidate scores when emit_candidates is True
+    assert result["mode"] == "direct_delimiter"
+    assert result["mode_id"] == 1
 
 
 def test_probe_recommend_strategy_task_auto_profile():
     samples = ["def foo():\n    pass\nclass Bar:\n    ..."]
     result = celery_app.tasks["probe.recommend_strategy"].apply(args=({"samples": samples},)).get()
     assert result["strategy_id"] in {"code_log_block", "heading_block_length_split", "sentence_split_sliding"}
+    assert result["mode"] in {"direct_delimiter", "semantic_sentence", "hierarchical_heading"}
+    assert result.get("mode_id") in {1, 2, 3}
     assert "params" in result

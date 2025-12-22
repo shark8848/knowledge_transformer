@@ -1,0 +1,10 @@
+# Dependency images (redis, minio, mysql, elasticsearch)
+# These wrap upstream images to ensure deterministic tags under one build pipeline.
+
+FROM redis:7-alpine AS redis
+
+FROM minio/minio:latest AS minio
+
+FROM mysql:8.0 AS mysql
+
+FROM docker.elastic.co/elasticsearch/elasticsearch:8.14.0 AS es

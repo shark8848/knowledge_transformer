@@ -185,7 +185,7 @@
 
 | 接口/工具 | 输入 | 输出 |
 |-----------|------|------|
-| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `mode`（`async` 默认 / `sync` 同步执行）、`callback_url`、`storage{endpoint,access_key,secret_key,bucket}`（可选），`files[]`（`source_format`, `target_format`, `input_url`/`object_key`/`base64_data`，可选 `filename`，`size_mb`，可选 `page_limit` 或 `duration_seconds` 二选一） | `status`, `task_id`, `message`, `results`(sync) |
+| `POST /api/v1/convert` | Headers: `X-Appid`, `X-Key`；Body: `task_name`, `priority`, `mode`（`async` 默认 / `sync` 同步执行）、`callback_url`、`storage{endpoint,access_key,secret_key,bucket}`（可选），`files[]`（`source_format`, `target_format` 可省略并按默认映射填充，`input_url`/`object_key`/`base64_data`，可选 `filename`，`size_mb`，可选 `page_limit` 或 `duration_seconds` 二选一） | `status`, `task_id`, `message`, `results`(sync) |
 | `GET /api/v1/formats` | Headers: `X-Appid`, `X-Key` | `formats[]`（`source`, `target`, `plugin`） |
 | `GET /api/v1/monitor/health` | Headers: `X-Appid`, `X-Key` | `status`, `timestamp`, `dependencies{redis,object_storage,celery_workers}` |
 | `GET /healthz` | 无 | `{"status":"ok"}` |
@@ -193,6 +193,30 @@
 | Pipeline `submit_conversion_chain` | `files[]`, `priority` | `AsyncResult.id`（转换→质量检查→后处理） |
 | Pipeline `submit_conversion_group` | `file_groups[][]`, `priority` | `task_ids[]`（并行批次） |
 | Pipeline `submit_conversion_chord` | `file_batches[][]`, `priority` | `chord_id`（并行+聚合） |
+
+**默认目标格式（省略 target_format 时的选择）**：优先取已注册插件的首个映射，其次取 `config/settings.yaml` 中该源格式出现的第一条配置。
+
+- doc → docx
+- docx → pdf
+- ppt → pdf
+- pptx → pdf
+- html → pdf
+- svg → png
+- gif → mp4
+- webp → png
+- wav → mp3
+- flac → mp3
+- ogg → mp3
+- aac → mp3
+- avi → mp4
+- mov → mp4
+- mkv → mp4
+- webm → mp4
+- mpeg → mp4
+- flv → mp4
+- ts → mp4
+- m4v → mp4
+- 3gp → mp4
 
 
 `page_limit` 仅适用于 `doc/docx/html/ppt/pptx`，生成 PDF 后保留前 N 页（`0/null` 表示不裁剪全文，未提供则使用配置的 `sample_pages` 抽样）；`duration_seconds` 仅适用于音视频/动图（`wav/flac/ogg/aac/avi/mov/mkv/webm/mpeg/flv/ts/m4v/3gp/gif`），两者互斥。`mode` 默认 `async` 返回 202 入队；`sync` 单文件同步执行直接返回结果（建议小体积），超时直接失败。不支持的格式或非法参数会在错误信息中携带源文件定位（`input_url`/`object_key`/`filename`），便于排查。

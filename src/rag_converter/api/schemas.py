@@ -10,7 +10,10 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class ConversionFile(BaseModel):
     source_format: str = Field(..., description="Original file format, e.g., doc")
-    target_format: str = Field(..., description="Desired output format, e.g., docx")
+    target_format: str | None = Field(
+        None,
+        description="Desired output format, e.g., docx; if omitted, server picks the default for this source format",
+    )
     input_url: HttpUrl | None = Field(None, description="Optional URL to fetch input")
     object_key: str | None = Field(None, description="Storage object key reference")
     base64_data: str | None = Field(

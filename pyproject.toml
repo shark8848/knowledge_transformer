@@ -24,14 +24,7 @@ dependencies = [
     "aiofiles>=23.2",
     "structlog>=23.1",
     "orjson>=3.9",
-    "pypdf>=4.3",
     "requests>=2.31",
-    "markdownify>=0.12",
-    "gradio>=4.36",
-    "openai-whisper>=20231117",
-    "dashscope>=1.15.0",
-    "openpyxl>=3.1",
-    "tabulate>=0.9",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +34,24 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.26",
     "ruff>=0.6"
+]
+converter = [
+    "pypdf>=4.3",
+    "markdownify>=0.12",
+    "openpyxl>=3.1",
+    "tabulate>=0.9",
+]
+asr = ["openai-whisper>=20231117"]
+ui = ["gradio>=4.36"]
+llm = ["dashscope>=1.15.0"]
+all = [
+    "openai-whisper>=20231117",
+    "gradio>=4.36",
+    "dashscope>=1.15.0",
+    "pypdf>=4.3",
+    "markdownify>=0.12",
+    "openpyxl>=3.1",
+    "tabulate>=0.9",
 ]
 
 [tool.setuptools]

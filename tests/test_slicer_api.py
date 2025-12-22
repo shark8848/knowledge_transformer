@@ -31,3 +31,6 @@ def test_recommend_strategy_endpoint_custom_delimiter():
     assert rec
     assert rec["strategy_id"] == "custom_delimiter_split"
     assert rec["delimiter_hits"] >= 2
+    assert rec["mode"] == "direct_delimiter"
+    assert rec["mode_id"] == 1
+    assert rec.get("mode_desc")
