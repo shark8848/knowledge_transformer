@@ -10,6 +10,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 # Common troubleshooting and client tools
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        bash \
         vim \
         nano \
         less \
