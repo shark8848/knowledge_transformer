@@ -7,6 +7,8 @@ LOG_DIR="$ROOT_DIR/logs"
 FLOWER_PORT="${VECTOR_FLOWER_PORT:-5562}"
 CELERY_LOG_LEVEL="${VECTOR_CELERY_LOG_LEVEL:-info}"
 VECTOR_WORKER_QUEUES="${VECTOR_WORKER_QUEUES:-vector}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+VECTOR_WORKER_NAME="${VECTOR_WORKER_NAME:-docker-vector-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
 # Load local environment overrides if present
@@ -66,9 +68,10 @@ start_component() {
 }
 
 start_component "Vector Worker" "$RUN_DIR/vector-worker.pid" "$LOG_DIR/vector-worker.log" \
-  "$CELERY" -A vector_service.celery_app:vector_celery worker -l "$CELERY_LOG_LEVEL" -Q "$VECTOR_WORKER_QUEUES"
+  "$CELERY" -A vector_service.celery_app:vector_celery worker -l "$CELERY_LOG_LEVEL" -Q "$VECTOR_WORKER_QUEUES" -n "$VECTOR_WORKER_NAME"
 
-start_component "Vector Flower" "$RUN_DIR/vector-flower.pid" "$LOG_DIR/vector-flower.log" \
-  "$CELERY" -A vector_service.celery_app:vector_celery flower --port="$FLOWER_PORT"
+# Flower disabled outside rag_converter container
+# start_component "Vector Flower" "$RUN_DIR/vector-flower.pid" "$LOG_DIR/vector-flower.log" \
+#   "$CELERY" -A vector_service.celery_app:vector_celery flower --port="$FLOWER_PORT"
 
 echo "[vector-start] Vector components launched. Logs: $LOG_DIR"

@@ -9,6 +9,8 @@ API_PORT="${MM_API_PORT:-8300}"
 FLOWER_PORT="${MM_FLOWER_PORT:-5559}"
 CELERY_LOG_LEVEL="${MM_CELERY_LOG_LEVEL:-info}"
 MM_WORKER_QUEUES="${MM_WORKER_QUEUES:-mm,video_vision}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+MM_WORKER_NAME="${MM_WORKER_NAME:-docker-multimodal-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
 # Load local environment overrides if present
@@ -63,9 +65,10 @@ start_component "Multimodal API" "$RUN_DIR/mm-api.pid" "$LOG_DIR/mm-api.log" \
   "$VENV_BIN/uvicorn" multimodal_service.app:app --host 0.0.0.0 --port "$API_PORT"
 
 start_component "Multimodal Worker" "$RUN_DIR/mm-worker.pid" "$LOG_DIR/mm-worker.log" \
-  "$VENV_BIN/celery" -A multimodal_service.celery_app:mm_celery worker -l "$CELERY_LOG_LEVEL" -Q "$MM_WORKER_QUEUES"
+  "$VENV_BIN/celery" -A multimodal_service.celery_app:mm_celery worker -l "$CELERY_LOG_LEVEL" -Q "$MM_WORKER_QUEUES" -n "$MM_WORKER_NAME"
 
-start_component "Multimodal Flower" "$RUN_DIR/mm-flower.pid" "$LOG_DIR/mm-flower.log" \
-  "$VENV_BIN/celery" -A multimodal_service.celery_app:mm_celery flower --port="$FLOWER_PORT"
+# Flower disabled outside rag_converter container
+# start_component "Multimodal Flower" "$RUN_DIR/mm-flower.pid" "$LOG_DIR/mm-flower.log" \
+#   "$VENV_BIN/celery" -A multimodal_service.celery_app:mm_celery flower --port="$FLOWER_PORT"
 
 echo "[mm-start] Multimodal components launched. Logs: $LOG_DIR"

@@ -8,6 +8,8 @@ API_PORT="${ASR_API_PORT:-8200}"
 FLOWER_PORT="${ASR_FLOWER_PORT:-5558}"
 CELERY_LOG_LEVEL="${ASR_CELERY_LOG_LEVEL:-info}"
 ASR_WORKER_QUEUES="${ASR_WORKER_QUEUES:-asr,video_asr}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+ASR_WORKER_NAME="${ASR_WORKER_NAME:-docker-audio-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
@@ -60,9 +62,10 @@ start_component "ASR API" "$RUN_DIR/asr-api.pid" "$LOG_DIR/asr-api.log" \
   "$UVICORN" asr_service.app:app --host 0.0.0.0 --port "$API_PORT"
 
 start_component "ASR Worker" "$RUN_DIR/asr-worker.pid" "$LOG_DIR/asr-worker.log" \
-  "$CELERY" -A asr_service.celery_app:asr_celery worker -l "$CELERY_LOG_LEVEL" -Q "$ASR_WORKER_QUEUES"
+  "$CELERY" -A asr_service.celery_app:asr_celery worker -l "$CELERY_LOG_LEVEL" -Q "$ASR_WORKER_QUEUES" -n "$ASR_WORKER_NAME"
 
-start_component "ASR Flower" "$RUN_DIR/asr-flower.pid" "$LOG_DIR/asr-flower.log" \
-  "$CELERY" -A asr_service.celery_app:asr_celery flower --port="$FLOWER_PORT"
+# Flower disabled outside rag_converter container
+# start_component "ASR Flower" "$RUN_DIR/asr-flower.pid" "$LOG_DIR/asr-flower.log" \
+#   "$CELERY" -A asr_service.celery_app:asr_celery flower --port="$FLOWER_PORT"
 
 echo "[asr-start] ASR components launched. Logs: $LOG_DIR"

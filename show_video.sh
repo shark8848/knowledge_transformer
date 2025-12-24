@@ -2,20 +2,25 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 RUN_DIR="$ROOT_DIR/.run"
 VIDEO_API_PORT="${VIDEO_API_PORT:-9200}"
 VIDEO_FLOWER_PORT="${VIDEO_FLOWER_PORT:-5560}"
 export PYTHONPATH="$ROOT_DIR/src"
 
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[video-show] Missing executable: $1" >&2
-    exit 1
-  fi
+SCRIPT_TAG="video-show"
+resolve_bin() {
+  local name="$1"
+  for cand in "/opt/venv/bin/$name" "$ROOT_DIR/.venv/bin/$name" "$(command -v "$name" 2>/dev/null)"; do
+    if [[ -n "$cand" && -x "$cand" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "[$SCRIPT_TAG] Missing executable: $name" >&2
+  exit 1
 }
 
-require_bin "$VENV_BIN/python"
+PYTHON=$(resolve_bin python)
 
 is_running() {
   local pid_file="$1"

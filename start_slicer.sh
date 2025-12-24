@@ -9,6 +9,8 @@ API_PORT="${SLICER_API_PORT:-8100}"
 FLOWER_PORT="${SLICER_FLOWER_PORT:-5556}"
 PROM_PORT="${SLICER_PROM_PORT:-9093}"
 CELERY_LOG_LEVEL="${SLICER_CELERY_LOG_LEVEL:-info}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+SLICER_WORKER_NAME="${SLICER_WORKER_NAME:-docker-slicer-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
@@ -57,9 +59,10 @@ start_component "Slicer API" "$RUN_DIR/slicer-api.pid" "$LOG_DIR/slicer-api.log"
   "$VENV_BIN/uvicorn" slicer_service.app:app --host 0.0.0.0 --port "$API_PORT"
 
 start_component "Slicer Worker" "$RUN_DIR/slicer-worker.pid" "$LOG_DIR/slicer-worker.log" \
-  "$VENV_BIN/celery" -A slicer_service.celery_app:celery_app worker -l "$CELERY_LOG_LEVEL"
+  "$VENV_BIN/celery" -A slicer_service.celery_app:celery_app worker -l "$CELERY_LOG_LEVEL" -n "$SLICER_WORKER_NAME"
 
-start_component "Slicer Flower" "$RUN_DIR/slicer-flower.pid" "$LOG_DIR/slicer-flower.log" \
-  "$VENV_BIN/celery" -A slicer_service.celery_app:celery_app flower --port="$FLOWER_PORT"
+# Flower disabled outside rag_converter container
+# start_component "Slicer Flower" "$RUN_DIR/slicer-flower.pid" "$LOG_DIR/slicer-flower.log" \
+#   "$VENV_BIN/celery" -A slicer_service.celery_app:celery_app flower --port="$FLOWER_PORT"
 
 echo "[start] Slicer components launched. Logs: $LOG_DIR"

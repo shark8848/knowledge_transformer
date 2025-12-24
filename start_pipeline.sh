@@ -9,6 +9,8 @@ PIPELINE_PORT="${PIPELINE_PORT:-9100}"
 PIPELINE_LOG_LEVEL="${PIPELINE_LOG_LEVEL:-info}"
 PIPELINE_FLOWER_PORT="${PIPELINE_FLOWER_PORT:-5557}"
 PIPELINE_QUEUE="${PIPELINE_QUEUE:-pipeline}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+PIPELINE_WORKER_NAME="${PIPELINE_WORKER_NAME:-docker-pipeline-service@${HOST_ID}}"
 
 # Optional: start dependent services (converter & slicer) if scripts exist.
 DEPEND_START_CONVERTER="${DEPEND_START_CONVERTER:-true}"
@@ -72,14 +74,14 @@ fi
 # Pipeline Celery worker
 start_component "Pipeline Celery" "$RUN_DIR/pipeline-celery.pid" "$LOG_DIR/pipeline-celery.log" \
   "$VENV_BIN/celery" -A pipeline_service.celery_app:pipeline_celery worker -l "$PIPELINE_LOG_LEVEL" \
-  -Q "$PIPELINE_QUEUE" -n pipeline@%h
+  -Q "$PIPELINE_QUEUE" -n "$PIPELINE_WORKER_NAME"
 
 # Pipeline API
 start_component "Pipeline API" "$RUN_DIR/pipeline-api.pid" "$LOG_DIR/pipeline-api.log" \
   "$VENV_BIN/uvicorn" pipeline_service.app:app --host 0.0.0.0 --port "$PIPELINE_PORT"
 
-# Pipeline Flower
-start_component "Pipeline Flower" "$RUN_DIR/pipeline-flower.pid" "$LOG_DIR/pipeline-flower.log" \
-  "$VENV_BIN/celery" -A pipeline_service.celery_app:pipeline_celery flower --port="$PIPELINE_FLOWER_PORT" --url_prefix="/pipeline-flower"
+# Pipeline Flower disabled outside rag_converter container
+# start_component "Pipeline Flower" "$RUN_DIR/pipeline-flower.pid" "$LOG_DIR/pipeline-flower.log" \
+#   "$VENV_BIN/celery" -A pipeline_service.celery_app:pipeline_celery flower --port="$PIPELINE_FLOWER_PORT" --url_prefix="/pipeline-flower"
 
 echo "[pipeline-start] Pipeline components launched. Logs: $LOG_DIR"

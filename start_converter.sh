@@ -18,6 +18,8 @@ API_DOCS_CONFIG="${API_DOCS_CONFIG:-$CONFIG_FILE}"
 API_DOCS_ALWAYS_REFRESH="${API_DOCS_ALWAYS_REFRESH:-false}"
 API_DOCS_FAVICON="${API_DOCS_FAVICON:-}"
 API_DOCS_TARGET_URL="${API_DOCS_TARGET_URL:-http://127.0.0.1:${API_PORT}}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+CONVERTER_WORKER_NAME="${CONVERTER_WORKER_NAME:-docker-ocr-service@${HOST_ID}}"
 
 TEST_ARTIFACTS_DIR_DEFAULT="$ROOT_DIR/tests/artifacts/conversions"
 export RAG_TEST_ARTIFACTS_DIR="${RAG_TEST_ARTIFACTS_DIR:-$TEST_ARTIFACTS_DIR_DEFAULT}"
@@ -25,6 +27,7 @@ export RAG_TEST_ARTIFACTS_DIR="${RAG_TEST_ARTIFACTS_DIR:-$TEST_ARTIFACTS_DIR_DEF
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$RAG_TEST_ARTIFACTS_DIR"
 
 FLOWER_PORT="${FLOWER_PORT:-5555}"
+FLOWER_UNAUTHENTICATED_API="${FLOWER_UNAUTHENTICATED_API:-true}"
 
 SCRIPT_TAG="converter-start"
 resolve_bin() {
@@ -71,9 +74,10 @@ start_component "Converter FastAPI" "$RUN_DIR/api.pid" "$LOG_DIR/api.log" \
   "$UVICORN" rag_converter.app:app --host 0.0.0.0 --port "$API_PORT"
 
 start_component "Converter Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/celery.log" \
-  "$CELERY" -A rag_converter.celery_app.celery_app worker -l "$CELERY_LOG_LEVEL"
+  "$CELERY" -A rag_converter.celery_app.celery_app worker -l "$CELERY_LOG_LEVEL" -n "$CONVERTER_WORKER_NAME"
 
 start_component "Converter Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/flower.log" \
+  env FLOWER_UNAUTHENTICATED_API="$FLOWER_UNAUTHENTICATED_API" \
   "$CELERY" -A rag_converter.celery_app.celery_app flower --port="$FLOWER_PORT" --url_prefix="/flower"
 
 start_component "TestReport" "$RUN_DIR/test-report.pid" "$LOG_DIR/test-report.log" \

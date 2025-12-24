@@ -7,6 +7,8 @@ LOG_DIR="$ROOT_DIR/logs"
 FLOWER_PORT="${LLM_FLOWER_PORT:-5560}"
 CELERY_LOG_LEVEL="${LLM_CELERY_LOG_LEVEL:-info}"
 LLM_WORKER_QUEUES="${LLM_WORKER_QUEUES:-llm}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+LLM_WORKER_NAME="${LLM_WORKER_NAME:-docker-llm-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
 # Load local environment overrides if present
@@ -66,9 +68,10 @@ start_component() {
 }
 
 start_component "LLM Worker" "$RUN_DIR/llm-worker.pid" "$LOG_DIR/llm-worker.log" \
-  "$CELERY" -A llm_service.celery_app:llm_celery worker -l "$CELERY_LOG_LEVEL" -Q "$LLM_WORKER_QUEUES"
+  "$CELERY" -A llm_service.celery_app:llm_celery worker -l "$CELERY_LOG_LEVEL" -Q "$LLM_WORKER_QUEUES" -n "$LLM_WORKER_NAME"
 
-start_component "LLM Flower" "$RUN_DIR/llm-flower.pid" "$LOG_DIR/llm-flower.log" \
-  "$CELERY" -A llm_service.celery_app:llm_celery flower --port="$FLOWER_PORT"
+# Flower disabled outside rag_converter container
+# start_component "LLM Flower" "$RUN_DIR/llm-flower.pid" "$LOG_DIR/llm-flower.log" \
+#   "$CELERY" -A llm_service.celery_app:llm_celery flower --port="$FLOWER_PORT"
 
 echo "[llm-start] LLM components launched. Logs: $LOG_DIR"

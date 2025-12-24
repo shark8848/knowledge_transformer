@@ -2,34 +2,33 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_BIN="$ROOT_DIR/.venv/bin"
 RUN_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
 VIDEO_API_PORT="${VIDEO_API_PORT:-9200}"
 VIDEO_FLOWER_PORT="${VIDEO_FLOWER_PORT:-5560}"
 VIDEO_CELERY_LOG_LEVEL="${VIDEO_CELERY_LOG_LEVEL:-info}"
 VIDEO_QUEUE="${VIDEO_QUEUE:-video}"
+HOST_ID="${HOSTNAME:-$(hostname)}"
+VIDEO_WORKER_NAME="${VIDEO_WORKER_NAME:-docker-video-service@${HOST_ID}}"
 export PYTHONPATH="$ROOT_DIR/src"
 
-# Load .env if present
-if [[ -f "$ROOT_DIR/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT_DIR/.env"
-  set +a
-fi
-
-mkdir -p "$RUN_DIR" "$LOG_DIR"
-
-require_bin() {
-  if [[ ! -x "$1" ]]; then
-    echo "[video-start] Missing executable: $1" >&2
-    exit 1
-  fi
+SCRIPT_TAG="video-start"
+resolve_bin() {
+  local name="$1"
+  for cand in "/opt/venv/bin/$name" "$ROOT_DIR/.venv/bin/$name" "$(command -v "$name" 2>/dev/null)"; do
+    if [[ -n "$cand" && -x "$cand" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "[$SCRIPT_TAG] Missing executable: $name" >&2
+  exit 1
 }
 
-require_bin "$VENV_BIN/uvicorn"
-require_bin "$VENV_BIN/celery"
+UVICORN=$(resolve_bin uvicorn)
+CELERY=$(resolve_bin celery)
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 is_running() {
   local pid_file="$1"
@@ -56,13 +55,14 @@ start_component() {
 }
 
 start_component "Video API" "$RUN_DIR/video-api.pid" "$LOG_DIR/video-api.log" \
-  "$VENV_BIN/uvicorn" video_service.app:app --host 0.0.0.0 --port "$VIDEO_API_PORT"
+  "$UVICORN" video_service.app:app --host 0.0.0.0 --port "$VIDEO_API_PORT"
 
 start_component "Video Worker" "$RUN_DIR/video-worker.pid" "$LOG_DIR/video-worker.log" \
-  "$VENV_BIN/celery" -A video_service.celery_app:video_celery worker -l "$VIDEO_CELERY_LOG_LEVEL" \
-  -Q "$VIDEO_QUEUE" -n video@%h
+  "$CELERY" -A video_service.celery_app:video_celery worker -l "$VIDEO_CELERY_LOG_LEVEL" \
+  -Q "$VIDEO_QUEUE" -n "$VIDEO_WORKER_NAME"
 
-start_component "Video Flower" "$RUN_DIR/video-flower.pid" "$LOG_DIR/video-flower.log" \
-  "$VENV_BIN/celery" -A video_service.celery_app:video_celery flower --port="$VIDEO_FLOWER_PORT" --url_prefix="/video-flower"
+# Flower disabled outside rag_converter container
+# start_component "Video Flower" "$RUN_DIR/video-flower.pid" "$LOG_DIR/video-flower.log" \
+#   "$CELERY" -A video_service.celery_app:video_celery flower --port="$VIDEO_FLOWER_PORT" --url_prefix="/video-flower"
 
 echo "[video-start] Video components launched. Logs: $LOG_DIR"
