@@ -27,6 +27,12 @@ RUN apt-get update \
         redis-tools \
         default-mysql-client \
         postgresql-client \
+        libxml2 \
+        libxml2-dev \
+        libxslt1.1 \
+        libxslt1-dev \
+        libjpeg62-turbo-dev \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -70,6 +76,7 @@ COPY --from=app-deps /opt/venv /opt/venv
 COPY pyproject.toml ./
 COPY src ./src
 COPY config ./config
+COPY secrets ./secrets
 COPY scripts ./scripts
 COPY start_*.sh stop_*.sh show_*.sh .
 COPY .env ./.env
@@ -163,6 +170,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
+COPY secrets ./secrets
 RUN if [ "${USE_VENV}" = "true" ]; then . /opt/venv/bin/activate; fi \
     && pip install --upgrade pip \
     && pip install --no-cache-dir '.[llm]'
@@ -227,6 +235,7 @@ CMD ["worker"]
 
 # ---------- Module: Video Service ----------
 FROM media-runtime AS video-service
-EXPOSE 8400
-ENV VIDEO_API_PORT=8400
+EXPOSE 9200
+ENV SERVICE_NAME=video \
+    VIDEO_API_PORT=9200
 CMD ["api"]
