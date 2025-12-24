@@ -1,0 +1,144 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "refresh_interval": "10s",
+    "analysis": {
+      "filter": {
+        "en_stemmer": { "type": "stemmer", "name": "english" }
+      },
+      "analyzer": {
+        "zh_smartcn": {
+          "type": "smartcn"
+        },
+        "en_text": {
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase",
+            "en_stemmer"
+          ]
+        },
+        "mixed_zh_en": {
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase"
+          ]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "dynamic_templates": [
+      {
+        "strings_as_keyword": {
+          "match_mapping_type": "string",
+          "mapping": { "type": "keyword", "ignore_above": 512 }
+        }
+      }
+    ],
+    "properties": {
+      "scope_id": { "type": "keyword" },
+      "doc_id": { "type": "keyword" },
+      "doc_version": { "type": "integer" },
+      "chunk_id": { "type": "keyword" },
+      "chunk_index": { "type": "integer" },
+
+      "primary_id": { "type": "keyword" },
+      "knowledge_id": { "type": "keyword" },
+      "file_id": { "type": "keyword" },
+
+      "title": {
+        "type": "text",
+        "analyzer": "ik_max_word",
+        "search_analyzer": "ik_smart",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+      "knowledge_type": { "type": "keyword" },
+
+      "content": {
+        "type": "text",
+        "analyzer": "ik_max_word",
+        "search_analyzer": "ik_smart",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+
+      "embedding": {
+        "type": "dense_vector",
+        "dims": 768,
+        "index": true,
+        "similarity": "cosine"
+      },
+
+      "content_image": { "type": "keyword" },
+
+      "content_values": {
+        "type": "text",
+        "analyzer": "ik_max_word",
+        "search_analyzer": "ik_smart",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+      "content_values_s": { "type": "keyword", "ignore_above": 1024 },
+
+      "knowledge_user_ids": { "type": "keyword" },
+      "knowledge_role_ids": { "type": "keyword" },
+
+      "department_id": { "type": "keyword" },
+      "enterprise_id": { "type": "keyword" },
+      "tenant_id": { "type": "keyword" },
+
+      "knowledge_base_id": { "type": "keyword" },
+      "kb_tree_id_0": { "type": "keyword" },
+      "kb_tree_id_1": { "type": "keyword" },
+      "kb_tree_id_2": { "type": "keyword" },
+      "kb_tree_id_3": { "type": "keyword" },
+
+      "parent_path_id": { "type": "keyword" },
+
+      "city_id": { "type": "keyword" },
+      "parent_city_id": { "type": "keyword" },
+
+      "document_status": { "type": "keyword" },
+      "lifecycle_status": { "type": "keyword" },
+      "created_user_id": { "type": "keyword" },
+
+      "tags": { "type": "keyword" },
+      "keywords": { "type": "keyword" },
+
+      "summary": {
+        "type": "text",
+        "analyzer": "ik_max_word",
+        "search_analyzer": "ik_smart",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+      "faq": { "type": "keyword" },
+
+      "external_classify_id": { "type": "keyword" },
+      "external_knowledge_id": { "type": "keyword" },
+      "external_attach_id": { "type": "keyword" },
+
+      "attributes": { "type": "flattened" },
+      "metadata": { "type": "flattened" },
+
+      "role_id": { "type": "keyword" },
+      "permitted_department_ids": { "type": "keyword" },
+      "permitted_user_ids": { "type": "keyword" },
+
+      "item_type": { "type": "byte" },
+      "item_type_name": { "type": "keyword" },
+
+      "vector_required": { "type": "boolean" },
+
+      "source_chunk_id": { "type": "keyword" },
+
+      "media_type": { "type": "keyword" },
+      "media_subtype": { "type": "keyword" },
+      "media_uri": { "type": "keyword", "ignore_above": 2048 },
+      "media_meta": { "type": "flattened" },
+
+      "is_deleted": { "type": "boolean" },
+      "deleted_at": { "type": "date" },
+      "expires_at": { "type": "date" }
+    }
+  }
+}

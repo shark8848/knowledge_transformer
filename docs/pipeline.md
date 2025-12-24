@@ -88,6 +88,7 @@
         "target": "pdf",
         "status": "success",
         "object_key": "converted/.../report.pdf",
+        "download_url": "http://localhost:9000/qadata/converted/.../report.pdf",
         "output_path": null,
         "metadata": {"note": "passthrough pdf"}
       }

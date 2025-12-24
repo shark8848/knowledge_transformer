@@ -46,6 +46,12 @@ export RAG_api_auth__required=false
 
 提供可观测 API 的路径和 Prometheus 端口。HTTP 指标端点默认位于 `http://<host>:prometheus_port/metrics`（API 进程），Celery worker 启动时会自动启用 `prometheus_port + 1`，若需自定义可在部署脚本中覆盖相关环境变量（例如 `RAG_monitoring__prometheus_port`）。
 
+### minio
+
+- `endpoint`：S3/MinIO 访问端点
+- `public_endpoint`：对外可访问的基址，生成稳定的 `download_url`（缺省回退 `endpoint`）
+- `presign_expiry_sec`：预签名 URL 过期时间；`0` 表示不预签名，直接返回稳定 URL（永久）。
+
 ## 插件声明
 
 `convert_formats` 列表用于文档化和前端展示，真实能力由 `src/rag_converter/plugins` 注册的插件决定；若注册插件为空，则回退到配置中的声明。默认示例包括：

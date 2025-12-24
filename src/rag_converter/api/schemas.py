@@ -69,6 +69,7 @@ class ConversionResultPayload(BaseModel):
     status: str
     output_path: str | None = None
     object_key: str | None = None
+    download_url: str | None = None
     metadata: dict[str, Any] | None = None
     reason: str | None = None
 

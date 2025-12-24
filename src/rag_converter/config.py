@@ -42,6 +42,8 @@ class StorageSettings(BaseModel):
     secret_key: str = "secret_key"
     bucket: str = "qadata"
     timeout: int = 30
+    public_endpoint: str | None = None
+    presign_expiry_sec: int | None = 0
 
 
 class ConversionFormat(BaseModel):

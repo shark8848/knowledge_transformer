@@ -19,6 +19,7 @@ from ..celery_app import (
     _apply_storage_override,
     _materialize_input,
     _upload_output,
+    _build_download_url,
     celery_app,
     handle_conversion_task,
 )
@@ -201,12 +202,15 @@ def _run_sync_conversion(payload: ConversionRequest, settings: Settings) -> Conv
         except Exception as exc:  # pragma: no cover - defensive
             raise_error("ERR_TASK_FAILED", detail=f"Upload failed: {exc}")
 
+    download_url = _build_download_url(output_object, task_settings, use_cache=use_cache)
+
     conv_result = ConversionResultPayload(
         source=source,
         target=target,
         status="success",
         output_path=str(output_path) if output_path else None,
         object_key=output_object,
+        download_url=download_url,
         metadata=result.metadata,
     )
 

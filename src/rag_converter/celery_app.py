@@ -151,6 +151,31 @@ def _upload_output(
     return object_key
 
 
+def _build_download_url(object_key: str | None, settings: Settings, *, use_cache: bool = True) -> str | None:
+    """Return a direct or presigned download URL for the converted artifact.
+
+    - If presign_expiry_sec > 0, attempt presigned URL with that expiry.
+    - Otherwise, build a stable URL using public_endpoint (if set) or endpoint/bucket/object_key.
+    """
+
+    if not object_key:
+        return None
+
+    base_endpoint = settings.minio.public_endpoint or settings.minio.endpoint
+    base_endpoint = str(base_endpoint).rstrip("/")
+
+    expiry = settings.minio.presign_expiry_sec
+    if expiry and expiry > 0:
+        try:
+            client = _get_minio_client(settings, use_cache=use_cache)
+            return client.presigned_get_object(settings.minio.bucket, object_key, expires=expiry)
+        except Exception:
+            # Fallback to static URL if presign fails
+            pass
+
+    return f"{base_endpoint}/{settings.minio.bucket}/{object_key}"
+
+
 def _store_test_artifact(path: Path | None, task_id: str | None) -> None:
     """Persist conversion output into a shared tests directory when configured."""
 
@@ -268,6 +293,8 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as upload_exc:  # pragma: no cover - defensive logging
                     logger.exception("Failed to upload output for %s -> %s", source, target)
 
+            download_url = _build_download_url(output_object, task_settings, use_cache=use_cache)
+
             _store_test_artifact(output_path, task_id)
 
             results.append(
@@ -277,6 +304,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "success",
                     "output_path": str(output_path) if output_path else None,
                     "object_key": output_object,
+                    "download_url": download_url,
                     "metadata": result.metadata,
                 }
             )

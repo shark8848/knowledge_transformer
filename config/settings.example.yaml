@@ -45,6 +45,8 @@ minio:
   secret_key: "your_secret_key"
   bucket: "qadata"
   timeout: 30
+  public_endpoint: "http://localhost:9000"
+  presign_expiry_sec: 0
 
 convert_formats:
   - source: "doc"
