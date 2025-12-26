@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_DIR="$ROOT_DIR/.run"
+API_PORT="${ES_SEARCH_SERVICE_API_PORT:-8086}"
+GRPC_PORT="${ES_SEARCH_SERVICE_GRPC_PORT:-9106}"
+PYTHONPATH="$ROOT_DIR/src"
+export PYTHONPATH
+
+# Load env overrides and map ES service creds to ES search service defaults.
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -o allexport
+  # shellcheck disable=SC1090
+  source "$ROOT_DIR/.env"
+  set +o allexport
+fi
+
+: "${ES_SEARCH_SERVICE_ES__ENDPOINT:=${ES_SERVICE_ES__ENDPOINT:-}}"
+: "${ES_SEARCH_SERVICE_ES__USERNAME:=${ES_SERVICE_ES__USERNAME:-}}"
+: "${ES_SEARCH_SERVICE_ES__PASSWORD:=${ES_SERVICE_ES__PASSWORD:-}}"
+: "${ES_SEARCH_SERVICE_ES__VERIFY_SSL:=${ES_SERVICE_ES__VERIFY_SSL:-}}"
+export ES_SEARCH_SERVICE_ES__ENDPOINT ES_SEARCH_SERVICE_ES__USERNAME ES_SEARCH_SERVICE_ES__PASSWORD \
+  ES_SEARCH_SERVICE_ES__VERIFY_SSL
+
+SCRIPT_TAG="es-search-service-show"
+resolve_bin() {
+  local name="$1"
+  for cand in "/opt/venv/bin/$name" "$ROOT_DIR/.venv/bin/$name" "$(command -v "$name" 2>/dev/null)"; do
+    if [[ -n "$cand" && -x "$cand" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "[$SCRIPT_TAG] Missing executable: $name" >&2
+  exit 1
+}
+
+PYTHON=$(resolve_bin python)
+
+is_running() {
+  local pid_file="$1"
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid=$(<"$pid_file")
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      echo "running (PID $pid)"
+      return
+    fi
+  fi
+  echo "stopped"
+}
+
+check_http() {
+  local url="$1"
+  if command -v curl >/dev/null 2>&1 && curl -fsS "$url" >/dev/null 2>&1; then
+    echo "healthy"
+  else
+    echo "unreachable"
+  fi
+}
+
+es_endpoint() {
+  "$PYTHON" - <<'PY'
+from es_search_service.config import get_settings
+print(get_settings().es.endpoint)
+PY
+}
+
+check_es() {
+  local endpoint="$1"
+  local curl_opts=()
+  [[ "${ES_SEARCH_SERVICE_ES__VERIFY_SSL:-false}" == "false" ]] && curl_opts+=(-k)
+  if [[ -n "${ES_SEARCH_SERVICE_ES__USERNAME:-}" && -n "${ES_SEARCH_SERVICE_ES__PASSWORD:-}" ]]; then
+    curl_opts+=(-u "${ES_SEARCH_SERVICE_ES__USERNAME}:${ES_SEARCH_SERVICE_ES__PASSWORD}")
+  fi
+  if command -v curl >/dev/null 2>&1 && curl -fsS "${curl_opts[@]}" "$endpoint/_cluster/health" >/dev/null 2>&1; then
+    echo "healthy"
+  else
+    echo "unreachable"
+  fi
+}
+
+celery_workers() {
+  "$PYTHON" - <<'PY'
+from es_search_service.tasks import celery_app
+try:
+    replies = celery_app.control.ping(timeout=1) or []
+    print(f"{len(replies)} workers responding")
+except Exception as exc:  # pragma: no cover
+    print(f"unable to reach workers ({exc.__class__.__name__})")
+PY
+}
+
+ES_ENDPOINT=$(es_endpoint)
+
+echo "== ES Search Service Process Status =="
+printf "%-28s %s\n" "ES Search Service API" "$(is_running "$RUN_DIR/es-search-service-api.pid")"
+printf "%-28s %s\n" "ES Search Service Celery" "$(is_running "$RUN_DIR/es-search-service-celery.pid")"
+printf "%-28s %s\n" "ES Search Service gRPC" "$(is_running "$RUN_DIR/es-search-service-grpc.pid")"
+printf "%-28s %s\n" "FastAPI /healthz" "$(check_http "http://127.0.0.1:${API_PORT}/healthz")"
+printf "%-28s %s\n" "gRPC port" "0.0.0.0:${GRPC_PORT}"
+
+echo "\n== Dependencies =="
+printf "%-28s %s\n" "Elasticsearch" "$(check_es "$ES_ENDPOINT")"
+printf "%-28s %s\n" "Celery workers" "$(celery_workers)"
+printf "%-28s %s\n" "ES endpoint" "$ES_ENDPOINT"

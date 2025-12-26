@@ -13,7 +13,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   source "$ROOT_DIR/.env"
   set +o allexport
   FLOWER_PORT="${VECTOR_FLOWER_PORT:-$FLOWER_PORT}"
-}
+fi
 
 is_running() {
   local pid_file="$1"
