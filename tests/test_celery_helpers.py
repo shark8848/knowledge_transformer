@@ -32,7 +32,7 @@ def test_materialize_input_downloads_from_object_store(tmp_path, test_settings, 
             Path(dest).write_text("data", encoding="utf-8")
 
     monkeypatch.setattr(worker, "WORK_DIR", tmp_path)
-    monkeypatch.setattr(worker, "_get_minio_client", lambda settings: _Client())
+    monkeypatch.setattr(worker, "_get_minio_client", lambda settings, use_cache=True: _Client())
 
     result = worker._materialize_input({"object_key": "foo/bar/baz.txt"}, test_settings)
     assert downloads and downloads[0][1] == "foo/bar/baz.txt"
@@ -63,7 +63,7 @@ def test_upload_output_sends_to_minio(tmp_path, test_settings, monkeypatch):
         def fput_object(self, bucket, object_key, path):
             uploads.append((bucket, object_key, path))
 
-    monkeypatch.setattr(worker, "_get_minio_client", lambda settings: _Client())
+    monkeypatch.setattr(worker, "_get_minio_client", lambda settings, use_cache=True: _Client())
     output_path = tmp_path / "result.txt"
     output_path.write_text("done", encoding="utf-8")
 
@@ -120,6 +120,52 @@ def test_handle_conversion_task_success(monkeypatch, tmp_path, test_settings):
     assert result["results"][0]["status"] == "success"
     assert statuses == ["success"]
     assert registry.requested == [("doc", "docx")]
+
+
+def test_handle_conversion_task_uploads_input_to_sitech(monkeypatch, tmp_path, test_settings):
+    statuses: list[str] = []
+    sitech_calls: list[Path] = []
+    sitech_output_calls: list[Path] = []
+
+    monkeypatch.setattr(worker, "record_task_completed", lambda status: statuses.append(status))
+    monkeypatch.setattr(worker, "ensure_metrics_server", lambda port: None)
+    monkeypatch.setattr(worker, "_worker_metrics_started", False)
+    monkeypatch.setattr(worker, "SETTINGS", test_settings)
+
+    input_file = tmp_path / "input.doc"
+    input_file.write_text("data", encoding="utf-8")
+    monkeypatch.setattr(worker, "_materialize_input", lambda file_meta, settings, use_cache=True: input_file)
+    monkeypatch.setattr(worker, "_upload_input_to_sitech", lambda path: sitech_calls.append(path) or "fid-123")
+    monkeypatch.setattr(worker, "_upload_output_to_sitech", lambda path: sitech_output_calls.append(path) or "fid-out")
+
+    class _Plugin:
+        def convert(self, conv_input):
+            return ConversionResult(output_path=str(tmp_path / "output.docx"), object_key="converted/docx")
+
+    class _Registry:
+        def get(self, source, target):
+            return _Plugin()
+
+    monkeypatch.setattr(worker, "REGISTRY", _Registry())
+
+    payload = {
+        "task_id": "task-1",
+        "files": [
+            {
+                "source_format": "doc",
+                "target_format": "docx",
+                "input_url": "https://example.com/file.doc",
+                "size_mb": 1,
+            }
+        ],
+    }
+
+    result = worker.handle_conversion_task.run(payload)
+    assert sitech_calls == [input_file]
+    assert sitech_output_calls == [tmp_path / "output.docx"]
+    assert result["results"][0]["sitech_fm_fileid"] == "fid-123"
+    assert result["results"][0]["sitech_fm_output_fileid"] == "fid-out"
+    assert statuses == ["success"]
 
 
 def test_handle_conversion_task_persists_artifacts(monkeypatch, tmp_path, test_settings):
@@ -201,7 +247,7 @@ def test_handle_conversion_task_records_failures(monkeypatch, tmp_path, test_set
     assert statuses == ["failed", "failed"]
     assert result["results"][0]["status"] == "failed"
     assert result["results"][1]["status"] == "failed"
-    assert "unsupported" in result["results"][1]["reason"]
+    assert "Unsupported format ppt->pptx" in result["results"][1]["reason"]
 
 
 def test_handle_conversion_task_respects_storage_override(monkeypatch, tmp_path, test_settings):

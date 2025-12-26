@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from pathlib import Path
 
 import pytest
 from celery.exceptions import CeleryError
@@ -175,7 +176,10 @@ def test_submit_conversion_sync_mode_runs_inline(api_client, monkeypatch):
 
     def fake_materialize(file_meta, settings, use_cache):
         calls["materialized"] = file_meta
-        return "/tmp/input.doc"
+        path = Path("/tmp/input.doc")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return path
 
     class _Plugin:
         def convert(self, conv_input):
@@ -194,6 +198,8 @@ def test_submit_conversion_sync_mode_runs_inline(api_client, monkeypatch):
         "rag_converter.api.routes._upload_output",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not upload")),
     )
+    monkeypatch.setattr("rag_converter.api.routes._upload_output_to_sitech", lambda path: None)
+    monkeypatch.setattr("rag_converter.api.routes._upload_input_to_sitech", lambda path: None)
 
     response = api_client.post(
         "/convert",
@@ -218,6 +224,58 @@ def test_submit_conversion_sync_mode_runs_inline(api_client, monkeypatch):
     assert body["results"][0]["object_key"] == "outputs/demo.docx"
     assert calls["materialized"]["input_url"] == "https://example.com/input.doc"
     assert calls["conversion_input"].source_format == "doc"
+
+
+def test_submit_conversion_sync_mode_uploads_sitech(api_client, monkeypatch, tmp_path):
+    calls = {}
+    input_file = tmp_path / "input.doc"
+    input_file.write_text("payload", encoding="utf-8")
+
+    def fake_materialize(file_meta, settings, use_cache):
+        return input_file
+
+    class _Plugin:
+        def convert(self, conv_input):
+            calls["conversion_input"] = conv_input
+
+            class _Result:
+                output_path = None
+                object_key = "outputs/demo.docx"
+                metadata = {"pages": 1}
+
+            return _Result()
+
+    monkeypatch.setattr("rag_converter.api.routes._materialize_input", fake_materialize)
+
+    def _fake_sitech_upload(path):
+        calls["sitech"] = path
+        return "fid-sync"
+
+    monkeypatch.setattr("rag_converter.api.routes._upload_input_to_sitech", _fake_sitech_upload)
+    monkeypatch.setattr("rag_converter.api.routes._upload_output", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rag_converter.api.routes._upload_output_to_sitech", lambda path: None)
+    monkeypatch.setattr("rag_converter.api.routes.REGISTRY.get", lambda s, t: _Plugin())
+
+    response = api_client.post(
+        "/convert",
+        json={
+            "task_name": "demo",
+            "mode": "sync",
+            "files": [
+                {
+                    "source_format": "doc",
+                    "target_format": "docx",
+                    "size_mb": 10,
+                    "input_url": "https://example.com/input.doc",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"][0]["sitech_fm_fileid"] == "fid-sync"
+    assert calls["sitech"] == input_file
 
 
 def test_submit_conversion_handles_celery_failure(api_client, monkeypatch):
