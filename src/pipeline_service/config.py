@@ -24,6 +24,38 @@ class Settings(BaseSettings):
     minio_secret_key: str = Field("minioadmin", description="MinIO secret key")
     minio_bucket: str = Field("qadata", description="Bucket storing converted artifacts")
 
+    file_manager_base_url: AnyUrl | str = Field(
+        "http://10.88.162.151:8989", description="File management server base URL"
+    )
+    file_manager_download_path: str = Field(
+        "/km/fm/downloadOriginal", description="Download endpoint path on the file server"
+    )
+    file_manager_upload_path: str = Field(
+        "/km/fm/fileUpload", description="Upload endpoint path on the file server"
+    )
+    file_manager_attach_id_param: str = Field(
+        "attachid", description="Query parameter name carrying the attachment identifier"
+    )
+    file_manager_file_field: str = Field(
+        "uploadFile", description="Multipart field name used for uploads (SI-TECH default is uploadFile)"
+    )
+    file_manager_default_form_fields: dict[str, str | int] = Field(
+        default_factory=lambda: {"source": "2", "attachType": "0"},
+        description="Default form fields sent with uploads to SI-TECH server (attachType/attactType configurable)",
+    )
+    file_manager_timeout_sec: int = Field(30, description="HTTP timeout for file server operations")
+    file_manager_verify_tls: bool = Field(True, description="Verify TLS certificates for file server calls")
+    file_manager_auth_header: str = Field(
+        "Authorization", description="Header name for token-based authentication when provided"
+    )
+    file_manager_token_prefix: str = Field(
+        "Bearer ", description="Prefix prepended to the auth token (leave blank to disable)"
+    )
+    file_manager_auth_token: Optional[str] = Field(None, description="Optional auth token for the file server")
+    file_manager_extra_headers: dict[str, str] = Field(
+        default_factory=dict, description="Additional headers to send to the file server"
+    )
+
     sample_pages: int = Field(5, description="Legacy fixed page count for probing (fallback)")
     sample_page_ratio: float = Field(0.2, description="比例抽页，基于文档页数，最大不超过10页")
     sample_char_limit: int = Field(5000, description="仅按字符抽取时的上限长度")

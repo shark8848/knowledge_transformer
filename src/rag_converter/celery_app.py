@@ -10,12 +10,13 @@ import shutil
 from binascii import Error as BinasciiError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from urllib.request import urlopen
 from uuid import uuid4
 
 from celery import Celery, signals
 from minio import Minio
+from pipeline_service.sitech_fm_client import FileUploadResult, get_sitech_fm_client
 
 from .config import Settings, get_settings
 from .monitoring import ensure_metrics_server, record_task_completed
@@ -46,6 +47,7 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 _TEST_ARTIFACTS_DIR_ENV = os.getenv("RAG_TEST_ARTIFACTS_DIR")
 TEST_ARTIFACTS_DIR = Path(_TEST_ARTIFACTS_DIR_ENV).expanduser() if _TEST_ARTIFACTS_DIR_ENV else None
 _MINIO_CLIENT: Optional[Minio] = None
+_SITECH_CLIENT = None
 
 
 def _apply_storage_override(settings: Settings, override: Optional[Dict[str, Any]]) -> Settings:
@@ -81,6 +83,13 @@ def _get_minio_client(settings: Settings, *, use_cache: bool = True) -> Minio:
     return client
 
 
+def _get_sitech_client():
+    global _SITECH_CLIENT
+    if _SITECH_CLIENT is None:
+        _SITECH_CLIENT = get_sitech_fm_client()
+    return _SITECH_CLIENT
+
+
 def _workspace_file(filename: str) -> Path:
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     return WORK_DIR / f"{uuid4().hex}_{filename}"
@@ -98,6 +107,14 @@ def _source_locator(file_meta: Dict[str, Any]) -> str:
 
 
 def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache: bool = True) -> Path:
+    attach_id = file_meta.get("sitech_attach_id") or file_meta.get("sitech_fm_fileid")
+    if attach_id:
+        filename = file_meta.get("filename") or f"{attach_id}"
+        dest = _workspace_file(filename)
+        client = _get_sitech_client()
+        client.download(attach_id, dest)
+        return dest
+
     if file_meta.get("base64_data"):
         raw_b64: str = file_meta["base64_data"]
         try:
@@ -131,6 +148,26 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache:
 
     if input_url := file_meta.get("input_url"):
         parsed = urlparse(input_url)
+
+        # 如果是 SI-TECH 下载链接，优先走 sitech client（支持认证/默认参数）
+        try:
+            client = _get_sitech_client()
+            cfg = getattr(client, "_config", None)
+            if cfg:
+                is_same_host = str(parsed.netloc).lower() == str(urlparse(cfg.base_url).netloc).lower()
+                is_same_path = parsed.path.rstrip("/") == str(cfg.download_path).rstrip("/")
+                q = parse_qs(parsed.query)
+                attach_param = cfg.attach_id_param
+                attach_val = q.get(attach_param, [None])[0]
+                if is_same_host and is_same_path and attach_val:
+                    filename = file_meta.get("filename") or Path(parsed.path).name or attach_val
+                    dest = _workspace_file(filename)
+                    client.download(attach_val, dest)
+                    return dest
+        except Exception:
+            # 回退走原始 URL 下载
+            pass
+
         filename = Path(parsed.path).name or "input.bin"
         dest = _workspace_file(filename)
         with urlopen(input_url, timeout=30) as response, dest.open("wb") as handle:
@@ -149,6 +186,37 @@ def _upload_output(
     client = _get_minio_client(settings, use_cache=use_cache)
     client.fput_object(settings.minio.bucket, object_key, str(path))
     return object_key
+
+
+def _upload_input_to_sitech(path: Path) -> Optional[str]:
+    """Upload original input to SI-TECH file manager; return fileid or None on failure."""
+
+    if not path.exists():
+        logger.warning("Sitech upload skipped; file not found: %s", path)
+        return None
+
+    try:
+        client = _get_sitech_client()
+        result: FileUploadResult = client.upload(path)
+        return result.fileid
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Sitech upload failed for %s: %s", path, exc)
+        return None
+
+
+def _upload_output_to_sitech(path: Path | None) -> Optional[str]:
+    """Upload converted output to SI-TECH; return fileid or None on failure."""
+
+    if not path or not path.exists():
+        return None
+
+    try:
+        client = _get_sitech_client()
+        result: FileUploadResult = client.upload(path)
+        return result.fileid
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Sitech output upload failed for %s: %s", path, exc)
+        return None
 
 
 def _build_download_url(object_key: str | None, settings: Settings, *, use_cache: bool = True) -> str | None:
@@ -293,6 +361,11 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as upload_exc:  # pragma: no cover - defensive logging
                     logger.exception("Failed to upload output for %s -> %s", source, target)
 
+            sitech_input_fileid = file_meta.get("sitech_attach_id") or file_meta.get("sitech_fm_fileid")
+            if not sitech_input_fileid:
+                sitech_input_fileid = _upload_input_to_sitech(input_path)
+
+            sitech_output_fileid = _upload_output_to_sitech(output_path)
             download_url = _build_download_url(output_object, task_settings, use_cache=use_cache)
 
             _store_test_artifact(output_path, task_id)
@@ -305,6 +378,8 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "output_path": str(output_path) if output_path else None,
                     "object_key": output_object,
                     "download_url": download_url,
+                    "sitech_fm_fileid": sitech_input_fileid,
+                    "sitech_fm_output_fileid": sitech_output_fileid,
                     "metadata": result.metadata,
                 }
             )

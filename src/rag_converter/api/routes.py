@@ -19,6 +19,8 @@ from ..celery_app import (
     _apply_storage_override,
     _materialize_input,
     _upload_output,
+    _upload_output_to_sitech,
+    _upload_input_to_sitech,
     _build_download_url,
     celery_app,
     handle_conversion_task,
@@ -202,6 +204,11 @@ def _run_sync_conversion(payload: ConversionRequest, settings: Settings) -> Conv
         except Exception as exc:  # pragma: no cover - defensive
             raise_error("ERR_TASK_FAILED", detail=f"Upload failed: {exc}")
 
+    sitech_input_fileid = file_meta.get("sitech_attach_id") or file_meta.get("sitech_fm_fileid")
+    if not sitech_input_fileid:
+        sitech_input_fileid = _upload_input_to_sitech(input_path)
+
+    sitech_output_fileid = _upload_output_to_sitech(output_path)
     download_url = _build_download_url(output_object, task_settings, use_cache=use_cache)
 
     conv_result = ConversionResultPayload(
@@ -211,6 +218,8 @@ def _run_sync_conversion(payload: ConversionRequest, settings: Settings) -> Conv
         output_path=str(output_path) if output_path else None,
         object_key=output_object,
         download_url=download_url,
+        sitech_fm_fileid=sitech_input_fileid,
+        sitech_fm_output_fileid=sitech_output_fileid,
         metadata=result.metadata,
     )
 

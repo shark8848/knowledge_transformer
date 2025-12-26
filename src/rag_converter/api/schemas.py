@@ -70,6 +70,8 @@ class ConversionResultPayload(BaseModel):
     output_path: str | None = None
     object_key: str | None = None
     download_url: str | None = None
+    sitech_fm_fileid: str | None = None
+    sitech_fm_output_fileid: str | None = None
     metadata: dict[str, Any] | None = None
     reason: str | None = None
 

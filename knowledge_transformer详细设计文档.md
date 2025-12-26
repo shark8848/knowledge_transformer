@@ -181,6 +181,24 @@
   | `post_process_task(checked_results)` | `checked_results:Dict` | Celery 任务，对通过质量检查的文件提取文本/向量，输出 `stage=completed`。 |
   | `aggregate_results_task(batch_results)` | `batch_results:List[Dict]` | Chord 回调，汇总批次成功率并触发通知，返回统计摘要。 |
 
+### SI-TECH 文件管理集成
+- 目标：支持直接从 SI-TECH 附件下载输入，并将输入与转换输出同时上传至 SI-TECH，兼容现有 MinIO 上传链路。
+- 环境变量（默认值已内置，可按需覆盖）：
+  - `PIPELINE_FILE_MANAGER_BASE_URL`（默认 `http://10.88.162.151:8989`）
+  - `PIPELINE_FILE_MANAGER_DOWNLOAD_PATH`（默认 `/km/fm/downloadOriginal`）
+  - `PIPELINE_FILE_MANAGER_UPLOAD_PATH`（默认 `/km/fm/fileUpload`）
+  - `PIPELINE_FILE_MANAGER_ATTACH_ID_PARAM`（默认 `attachid`）
+  - `PIPELINE_FILE_MANAGER_DEFAULT_FORM_FIELDS`（默认 `{"source":"2","attachType":"0"}`，必须是合法 JSON 字符串）
+  - 可选鉴权：`PIPELINE_FILE_MANAGER_AUTH_TOKEN`、`PIPELINE_FILE_MANAGER_TOKEN_PREFIX`、`PIPELINE_FILE_MANAGER_AUTH_HEADER`
+- 入参扩展：`files[*].sitech_attach_id`（或 `sitech_fm_fileid`），可选 `filename`。传入附件 ID 时，worker 通过 `downloadOriginal` 拉取原件；未传则按 URL/MinIO/base64 获取输入，并将原始输入额外上传 SI-TECH。
+- 返回扩展字段：`sitech_fm_fileid`（输入在 SI-TECH 的 fileid，携带附件 ID 时透传）、`sitech_fm_output_fileid`（输出上传 SI-TECH 的 fileid），同时保留 MinIO `object_key`/`download_url`。
+- Celery 任务示例：
+  ```bash
+  celery -A rag_converter.celery_app call conversion.handle_batch \
+    --kwargs='{"task_id":"sitech-demo","files":[{"source_format":"doc","target_format":"pdf","size_mb":10,"sitech_attach_id":"9A4159B96B534465AF5D84F2E94E5AAA","filename":"demo.doc"}]}'
+  ```
+- 调试脚本：`scripts/test_sitech_fm_client.py` 可单独验证 SI-TECH 上传/下载。
+
 ### 6. 接口与关键工具（输入/输出）
 
 | 接口/工具 | 输入 | 输出 |

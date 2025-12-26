@@ -101,6 +101,50 @@ Knowledge Transformer 知识库文档规范化转换服务引擎，围绕“参�
         最近一次在 `PAGE_LIMIT=5` 下通过（并发示例 10）。
     - 所有脚本默认请求 `http://127.0.0.1:8000/api/v1/convert`，使用仓库内 appid/key。
 
+## SI-TECH 文件管理对接
+
+- 环境变量（如需覆盖默认值）：
+    - `PIPELINE_FILE_MANAGER_BASE_URL`：默认 `http://10.88.162.151:8989`
+    - `PIPELINE_FILE_MANAGER_DOWNLOAD_PATH`：默认 `/km/fm/downloadOriginal`
+    - `PIPELINE_FILE_MANAGER_UPLOAD_PATH`：默认 `/km/fm/fileUpload`
+    - `PIPELINE_FILE_MANAGER_ATTACH_ID_PARAM`：默认 `attachid`
+    - `PIPELINE_FILE_MANAGER_DEFAULT_FORM_FIELDS`：默认 `{"source":"2","attachType":"0"}`，务必使用合法 JSON 字符串
+    - 可选鉴权：`PIPELINE_FILE_MANAGER_AUTH_TOKEN`、`PIPELINE_FILE_MANAGER_TOKEN_PREFIX`、`PIPELINE_FILE_MANAGER_AUTH_HEADER`
+
+- 请求入参：
+    - `files[*].sitech_attach_id`（或 `sitech_fm_fileid`）：直接从 SI-TECH 下载原件。
+    - 可选 `filename`：落地文件名。
+    - 其余字段与原有接口一致（`source_format`、`target_format` 等）。
+
+- 响应新增字段：
+    - `sitech_fm_fileid`：原始输入上传/复用后的 SI-TECH fileid（若请求带 `sitech_attach_id`，原值透传）。
+    - `sitech_fm_output_fileid`：转换输出上传到 SI-TECH 后的 fileid。
+
+- 示例（同步 API）：
+    ```bash
+    curl -X POST http://localhost:8000/convert \
+        -H 'Content-Type: application/json' \
+        -d '{
+            "task_name": "sitech-sync",
+            "mode": "sync",
+            "files": [{
+                "source_format": "doc",
+                "target_format": "pdf",
+                "size_mb": 10,
+                "sitech_attach_id": "9A4159B96B534465AF5D84F2E94E5AAA",
+                "filename": "demo.doc"
+            }]
+        }'
+    ```
+
+- Celery 调用示例：
+    ```bash
+    celery -A rag_converter.celery_app call conversion.handle_batch \
+        --kwargs='{"task_id":"sitech-demo","files":[{"source_format":"doc","target_format":"pdf","size_mb":10,"sitech_attach_id":"9A4159B96B534465AF5D84F2E94E5AAA","filename":"demo.doc"}]}'
+    ```
+
+- 调试脚本：`scripts/test_sitech_fm_client.py` 可单测 SI-TECH 上传/下载。
+
 ## 技术栈
 
 - **语言**：Python 3.11+
@@ -325,6 +369,7 @@ Content-Type: application/json
             "target": "pdf",
             "status": "success",
             "object_key": "converted/4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111/report.pdf",
+            "download_url": "http://localhost:9000/qadata/converted/4b52c3e6-5c2a-4f9b-9d3c-17e7f6e3e111/report.pdf",
             "metadata": {"note": "Converted via LibreOffice soffice"}
         }
     ]
@@ -352,6 +397,7 @@ Content-Type: application/json
             "target": "docx",
             "status": "success",
             "object_key": "converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx",
+            "download_url": "http://localhost:9000/qadata/converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx",
             "metadata": {"note": "Converted via LibreOffice soffice"}
         },
         {
@@ -376,6 +422,8 @@ Content-Type: application/json
 | `error_code` | string | 错误码（失败时），详见 `docs/error_codes.md` |
 | `error_status` | number | HTTP 状态码（失败时） |
 
+新增：`download_url`（可选）指向可直接下载的目标文件。
+
 **获取转换后的文件：**
 
 转换完成后，系统通过以下方式提供文件访问：
@@ -384,6 +432,10 @@ Content-Type: application/json
     - 转换后的文件自动上传到 MinIO/S3 对象存储，目标桶/凭证由配置 `minio.{endpoint,access_key,secret_key,bucket}` 决定
     - 存储路径格式：`converted/{task_id}/{filename}`
     - 示例：`converted/a3f7e9d2-4c5b-4e8a-9f2d-1a6b8c3e5d7f/report.docx`
+    - 返回结果会同时给出 `download_url`：
+        - 当 `minio.presign_expiry_sec>0` 时为带过期时间的预签名 URL；
+        - 当 `minio.presign_expiry_sec=0`（默认，永久）时，返回基于 `minio.public_endpoint` 或 `minio.endpoint` 拼接的稳定 URL。
+    - 例：`http://localhost:9000/qadata/converted/a3f7e9d2-.../report.docx`
     - 如未显式提供对象存储地址与凭证，使用缺省配置：`endpoint=http://localhost:9000`，`access_key=minioadmin`，`secret_key=minioadmin`，`bucket=qadata`
 
 2. **Webhook 回调**
