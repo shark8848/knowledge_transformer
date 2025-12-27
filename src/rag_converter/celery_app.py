@@ -95,6 +95,22 @@ def _workspace_file(filename: str) -> Path:
     return WORK_DIR / f"{uuid4().hex}_{filename}"
 
 
+def _unwrap_download(path: Path) -> Path:
+    """If a download produces a directory, pick the single file inside or fail with context."""
+
+    if not path.is_dir():
+        return path
+
+    files = [p for p in path.rglob("*") if p.is_file()]
+    if len(files) == 1:
+        return files[0]
+
+    entries = list(path.iterdir()) if path.exists() else []
+    names = ", ".join(e.name for e in entries[:5])
+    more = "" if len(entries) <= 5 else f" (+{len(entries)-5} more)"
+    raise ValueError(f"Downloaded path is a directory: {path}; entries={names}{more}")
+
+
 def _source_locator(file_meta: Dict[str, Any]) -> str:
     """Mirror API-side locator for clearer worker errors without re-validating."""
 
@@ -113,7 +129,7 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache:
         dest = _workspace_file(filename)
         client = _get_sitech_client()
         client.download(attach_id, dest)
-        return dest
+        return _unwrap_download(dest)
 
     if file_meta.get("base64_data"):
         raw_b64: str = file_meta["base64_data"]
@@ -144,7 +160,7 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache:
         dest = _workspace_file(filename)
         client = _get_minio_client(settings, use_cache=use_cache)
         client.fget_object(settings.minio.bucket, object_key, str(dest))
-        return dest
+        return _unwrap_download(dest)
 
     if input_url := file_meta.get("input_url"):
         parsed = urlparse(input_url)
@@ -163,7 +179,7 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache:
                     filename = file_meta.get("filename") or Path(parsed.path).name or attach_val
                     dest = _workspace_file(filename)
                     client.download(attach_val, dest)
-                    return dest
+                    return _unwrap_download(dest)
         except Exception:
             # 回退走原始 URL 下载
             pass
@@ -172,7 +188,7 @@ def _materialize_input(file_meta: Dict[str, Any], settings: Settings, use_cache:
         dest = _workspace_file(filename)
         with urlopen(input_url, timeout=30) as response, dest.open("wb") as handle:
             shutil.copyfileobj(response, handle)
-        return dest
+        return _unwrap_download(dest)
 
     raise ValueError("No input source provided (object_key or input_url required)")
 
@@ -182,6 +198,8 @@ def _upload_output(
 ) -> Optional[str]:
     if not path or not Path(path).exists():
         return None
+    if Path(path).is_dir():
+        raise ValueError(f"Output path is a directory: {path}")
     object_key = f"converted/{task_id or uuid4().hex}/{Path(path).name}"
     client = _get_minio_client(settings, use_cache=use_cache)
     client.fput_object(settings.minio.bucket, object_key, str(path))
@@ -208,6 +226,8 @@ def _upload_output_to_sitech(path: Path | None) -> Optional[str]:
     """Upload converted output to SI-TECH; return fileid or None on failure."""
 
     if not path or not path.exists():
+        return None
+    if path.is_dir():
         return None
 
     try:
@@ -271,6 +291,36 @@ def _store_test_artifact(path: Path | None, task_id: str | None) -> None:
         logger.debug("Unable to persist test artifact", exc_info=exc)
 
 
+def _guess_filename(file_meta: Dict[str, Any], input_path: Path | None = None) -> Optional[str]:
+    """Best-effort filename for result payloads.
+
+    Priority: explicit filename -> input_path -> object_key basename -> input_url path basename -> None.
+    """
+
+    if file_meta.get("filename"):
+        return file_meta.get("filename")
+
+    if input_path:
+        return Path(input_path).name
+
+    object_key = file_meta.get("object_key")
+    if object_key:
+        name = Path(object_key).name
+        if name:
+            return name
+
+    input_url = file_meta.get("input_url")
+    if input_url:
+        try:
+            name = Path(urlparse(input_url).path).name
+            if name:
+                return name
+        except Exception:
+            pass
+
+    return None
+
+
 def _ensure_worker_metrics_started() -> None:
     """Start worker-side metrics exactly once per process."""
 
@@ -304,26 +354,123 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     files: List[Dict[str, Any]] = payload.get("files", [])
     results: List[Dict[str, Any]] = []
 
+    logger.debug("Starting conversion task %s with %d files", task_id, len(files))   
+    logger.debug("Conversion task payload: %s", payload)
+
     for file_meta in files:
+        # 对于空的转换请求，直接跳过 source，但允许 target 为空透传到下游（将得到不支持格式的失败结果）
+        def _is_missing(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                return normalized == "" or normalized in {"null", "none"}
+            return False
+
         source = file_meta.get("source_format")
         target = file_meta.get("target_format")
-        try:
-            plugin = REGISTRY.get(source, target)
-        except KeyError as exc:
-            logger.exception("Unsupported format: %s -> %s", source, target)
+
+        def _norm_fmt(value: Any) -> Any:
+            if isinstance(value, str):
+                return value.strip().lower()
+            return value
+
+        source_norm = _norm_fmt(source)
+        target_norm = _norm_fmt(target)
+        missing_target = _is_missing(target)
+
+        # 对于空目标格式，视为与 source 相同，走透传上传
+        if missing_target:
+            target_norm = source_norm
+
+        target_for_lookup = "" if missing_target else target
+
+        if _is_missing(source):
+            logger.error("Missing source format for file %s", _source_locator(file_meta))
             record_task_completed("failed")
             results.append(
                 {
                     "source": source,
                     "target": target,
-                    "status": "failed",
-                    "reason": f"Unsupported format {source}->{target} (source={_source_locator(file_meta)})",
+                    "status": "ignored",
+                    "reason": "no source_format provided",
+                    "filename": file_meta.get("filename"),
+                    "file_meta": file_meta,
                 }
             )
             continue
 
+        # Passthrough: same source/target (including empty target treated as source), just upload original as output
+        if target_norm and source_norm == target_norm:
+            try:
+                input_path = _materialize_input(file_meta, task_settings, use_cache=use_cache)
+                result_filename = _guess_filename(file_meta, input_path)
+                if input_path.is_dir():
+                    raise ValueError(f"Input path is a directory: {input_path}")
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.exception("Failed to prepare input for passthrough %s -> %s", source, target)
+                record_task_completed("failed")
+                results.append(
+                    {
+                        "source": source,
+                        "target": target,
+                        "status": "failed",
+                        "reason": f"Input preparation failed (source={_source_locator(file_meta)}): {exc}",
+                        "filename": _guess_filename(file_meta),
+                    }
+                )
+                continue
+
+            output_path = input_path
+            output_object = _upload_output(output_path, task_settings, task_id, use_cache=use_cache)
+            sitech_input_fileid = file_meta.get("sitech_attach_id") or file_meta.get("sitech_fm_fileid")
+            if not sitech_input_fileid:
+                sitech_input_fileid = _upload_input_to_sitech(input_path)
+
+            sitech_output_fileid = _upload_output_to_sitech(output_path)
+            download_url = _build_download_url(output_object, task_settings, use_cache=use_cache)
+
+            _store_test_artifact(output_path, task_id)
+
+            results.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "status": "success",
+                    "output_path": str(output_path) if output_path else None,
+                    "object_key": output_object,
+                    "download_url": download_url,
+                    "sitech_fm_fileid": sitech_input_fileid,
+                    "sitech_fm_output_fileid": sitech_output_fileid,
+                    "metadata": {"passthrough": True},
+                    "filename": result_filename,
+                }
+            )
+            record_task_completed("success")
+            continue
+
+        try:
+            plugin = REGISTRY.get(source, target_for_lookup)
+        except KeyError as exc:
+            # 只有显式目标且非透传时才报不支持；空目标已被透传处理
+            if not missing_target and target_norm != source_norm:
+                logger.exception("Unsupported format: %s -> %s", source, target)
+                record_task_completed("failed")
+                results.append(
+                    {
+                        "source": source,
+                        "target": target,
+                        "status": "failed",
+                        "reason": f"Unsupported format {source}->{target} (source={_source_locator(file_meta)})",
+                        "filename": _guess_filename(file_meta),
+                    }
+                )
+                continue
+            plugin = None
+
         try:
             input_path = _materialize_input(file_meta, task_settings, use_cache=use_cache)
+            result_filename = _guess_filename(file_meta, input_path)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Failed to prepare input for %s -> %s", source, target)
             record_task_completed("failed")
@@ -333,6 +480,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "target": target,
                     "status": "failed",
                     "reason": f"Input preparation failed (source={_source_locator(file_meta)}): {exc}",
+                    "filename": _guess_filename(file_meta),
                 }
             )
             continue
@@ -381,6 +529,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "sitech_fm_fileid": sitech_input_fileid,
                     "sitech_fm_output_fileid": sitech_output_fileid,
                     "metadata": result.metadata,
+                    "filename": result_filename,
                 }
             )
             record_task_completed("success")
@@ -393,6 +542,7 @@ def handle_conversion_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "target": target,
                     "status": "failed",
                     "reason": str(exc),
+                    "filename": _guess_filename(file_meta),
                 }
             )
 

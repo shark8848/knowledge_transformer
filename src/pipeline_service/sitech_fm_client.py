@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 from dataclasses import dataclass
 from functools import lru_cache
@@ -13,6 +14,10 @@ from requests import Response, Session
 from requests.exceptions import RequestException
 
 from .config import get_settings
+from .logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class FileManagementError(RuntimeError):
@@ -109,14 +114,33 @@ class SitechFmClient:
             self._ensure_success(response, "download")
 
             dest_path = Path(destination)
+            if dest_path.is_dir() or dest_path.suffix == "":
+                # Try to honor filename from Content-Disposition or fallback to attach_id.
+                filename = self._parse_filename(response) or f"{attach_id}"
+                # Keep suffix if we can parse one from filename; otherwise use generic bin.
+                suffix = Path(filename).suffix or Path(url).suffix or ".bin"
+                dest_path = dest_path / (Path(filename).stem + suffix)
+
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             with dest_path.open("wb") as fh:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=81920):
                     if chunk:
                         fh.write(chunk)
             return dest_path
         except RequestException as exc:  # noqa: BLE001
             raise FileManagementError(f"download request failed: {exc}") from exc
+
+    @staticmethod
+    def _parse_filename(response: Response) -> str | None:
+        dispo = response.headers.get("Content-Disposition") or response.headers.get("content-disposition")
+        if not dispo:
+            return None
+        parts = dispo.split(";")
+        for p in parts:
+            if "filename=" in p:
+                candidate = p.split("=", 1)[1].strip().strip('"')
+                return candidate or None
+        return None
 
     def upload(
         self,
@@ -132,17 +156,26 @@ class SitechFmClient:
         upload_name = filename or path.name
 
         url = self._config.build_url(self._config.upload_path)
+        logger.debug("Uploading file %s to %s", str(path), url)
 
         try:
-            print(
-                "[sitech_fm_client] upload request",
-                {
-                    "url": url,
-                    "params": params,
-                    "form_fields": data,
-                    "file_field": self._config.file_field_name,
-                    "filename": upload_name,
-                },
+            full_url = url
+            if params:
+                # Compose a traceable URL with query params for debugging.
+                from requests.models import PreparedRequest
+
+                req = PreparedRequest()
+                req.prepare_url(url, params)
+                full_url = req.url
+
+            logger.info(
+                "sitech_fm.upload.request url=%s full_url=%s params=%s form_fields=%s file_field=%s upload_filename=%s",
+                url,
+                full_url,
+                params,
+                data,
+                self._config.file_field_name,
+                upload_name,
             )
             with path.open("rb") as fh:
                 files = {self._config.file_field_name: (upload_name, fh)}
@@ -156,7 +189,7 @@ class SitechFmClient:
                 )
             self._ensure_success(response, "upload")
         except RequestException as exc:  # noqa: BLE001
-            print(f"[sitech_fm_client] upload request failed: {exc}")
+            logger.error("sitech_fm.upload.request_failed", exc_info=exc)
             raise FileManagementError(f"upload request failed: {exc}") from exc
 
         body_text = response.text
@@ -165,8 +198,12 @@ class SitechFmClient:
         except ValueError:
             payload = self._parse_json_loose(body_text, response.status_code)
 
-        # Debug trace: print full response for troubleshooting non-standard payloads.
-        print(f"[sitech_fm_client] upload response status={response.status_code}, body={body_text}")
+        # Debug trace to pipeline logs for troubleshooting non-standard payloads.
+        logger.info(
+            "sitech_fm.upload.response status=%s body=%s",
+            response.status_code,
+            body_text[:5000],
+        )
 
         code = str(payload.get("code")) if payload.get("code") is not None else None
         if code not in {"success", "0", "200"}:
