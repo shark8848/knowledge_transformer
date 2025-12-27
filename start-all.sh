@@ -12,10 +12,10 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 ES_ENDPOINT_DEFAULT="http://localhost:9200"
-ES_ENDPOINT="${ES_SERVICE_ES__ENDPOINT:-$ES_ENDPOINT_DEFAULT}"
-ES_USER="${ES_SERVICE_ES__USERNAME:-}"
-ES_PASS="${ES_SERVICE_ES__PASSWORD:-}"
-ES_VERIFY="${ES_SERVICE_ES__VERIFY_SSL:-false}"
+ES_ENDPOINT="${ES_INDEX_SERVICE_ES__ENDPOINT:-${ES_SERVICE_ES__ENDPOINT:-$ES_ENDPOINT_DEFAULT}}"
+ES_USER="${ES_INDEX_SERVICE_ES__USERNAME:-${ES_SERVICE_ES__USERNAME:-}}"
+ES_PASS="${ES_INDEX_SERVICE_ES__PASSWORD:-${ES_SERVICE_ES__PASSWORD:-}}"
+ES_VERIFY="${ES_INDEX_SERVICE_ES__VERIFY_SSL:-${ES_SERVICE_ES__VERIFY_SSL:-false}}"
 
 check_es() {
   local endpoint="$1"
@@ -66,7 +66,7 @@ fi
 run_script "$ROOT_DIR/start_converter.sh" "converter"
 run_script "$ROOT_DIR/start_slicer.sh" "slicer"
 # ES write + search services (dependencies for downstream pipeline/vector/search)
-run_script "$ROOT_DIR/start_es_service.sh" "es_service"
+run_script "$ROOT_DIR/start_es_index_service.sh" "es_index_service"
 run_script "$ROOT_DIR/start_es_search_service.sh" "es_search_service"
 # Generic LLM service (independent provider)
 run_script "$ROOT_DIR/start_llm.sh" "llm"

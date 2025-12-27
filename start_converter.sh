@@ -19,7 +19,7 @@ API_DOCS_ALWAYS_REFRESH="${API_DOCS_ALWAYS_REFRESH:-false}"
 API_DOCS_FAVICON="${API_DOCS_FAVICON:-}"
 API_DOCS_TARGET_URL="${API_DOCS_TARGET_URL:-http://127.0.0.1:${API_PORT}}"
 HOST_ID="${HOSTNAME:-$(hostname)}"
-CONVERTER_WORKER_NAME="${CONVERTER_WORKER_NAME:-docker-ocr-service@${HOST_ID}}"
+CONVERTER_WORKER_NAME="${CONVERTER_WORKER_NAME:-docker-converter-service@${HOST_ID}}"
 
 TEST_ARTIFACTS_DIR_DEFAULT="$ROOT_DIR/tests/artifacts/conversions"
 export RAG_TEST_ARTIFACTS_DIR="${RAG_TEST_ARTIFACTS_DIR:-$TEST_ARTIFACTS_DIR_DEFAULT}"
@@ -70,21 +70,21 @@ start_component() {
   echo "[converter-start] $name PID $(<"$pid_file")"
 }
 
-start_component "Converter FastAPI" "$RUN_DIR/api.pid" "$LOG_DIR/api.log" \
+start_component "Converter FastAPI" "$RUN_DIR/api.pid" "$LOG_DIR/rag-converter-api.log" \
   "$UVICORN" rag_converter.app:app --host 0.0.0.0 --port "$API_PORT"
 
-start_component "Converter Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/celery.log" \
-  "$CELERY" -A rag_converter.celery_app.celery_app worker -l "$CELERY_LOG_LEVEL" -n "$CONVERTER_WORKER_NAME"
+start_component "Converter Celery" "$RUN_DIR/celery.pid" "$LOG_DIR/rag-converter-celery.log" \
+  "$CELERY" -A rag_converter.celery_app.celery_app worker -l "$CELERY_LOG_LEVEL" -n "$CONVERTER_WORKER_NAME" -Q conversion
 
-start_component "Converter Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/flower.log" \
+start_component "Converter Flower" "$RUN_DIR/flower.pid" "$LOG_DIR/rag-converter-flower.log" \
   env FLOWER_UNAUTHENTICATED_API="$FLOWER_UNAUTHENTICATED_API" \
   "$CELERY" -A rag_converter.celery_app.celery_app flower --port="$FLOWER_PORT" --url_prefix="/flower"
 
-start_component "TestReport" "$RUN_DIR/test-report.pid" "$LOG_DIR/test-report.log" \
+start_component "TestReport" "$RUN_DIR/test-report.pid" "$LOG_DIR/rag-converter-test-report.log" \
   env TEST_REPORT_PATH="$TEST_REPORT_PATH" TEST_REPORT_PORT="$TEST_REPORT_PORT" TEST_REPORT_HOST="$TEST_REPORT_HOST" \
   "$PYTHON" "$ROOT_DIR/test_report_server.py"
 
-start_component "APIDocs" "$RUN_DIR/api-docs.pid" "$LOG_DIR/api-docs.log" \
+start_component "APIDocs" "$RUN_DIR/api-docs.pid" "$LOG_DIR/rag-converter-api-docs.log" \
   env API_DOCS_PORT="$API_DOCS_PORT" API_DOCS_HOST="$API_DOCS_HOST" API_DOCS_TITLE="$API_DOCS_TITLE" \
       API_DOCS_CONFIG="$API_DOCS_CONFIG" API_DOCS_ALWAYS_REFRESH="$API_DOCS_ALWAYS_REFRESH" \
       API_DOCS_FAVICON="$API_DOCS_FAVICON" API_DOCS_TARGET_URL="$API_DOCS_TARGET_URL" \
