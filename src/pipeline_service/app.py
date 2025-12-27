@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .celery_app import pipeline_celery
 from .config import get_settings
+from .logging_config import setup_logging
 from .minio_client import get_minio_client
 from .utils import normalize_source_format, prefer_markdown_target
 
@@ -43,6 +44,7 @@ class PipelineResponse(BaseModel):
 
 
 def create_app() -> FastAPI:
+    setup_logging()
     settings = get_settings()
     app = FastAPI(title=settings.api_title, version=settings.api_version)
 

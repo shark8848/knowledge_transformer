@@ -43,7 +43,7 @@ class Settings(BaseSettings):
         default_factory=lambda: {"source": "2", "attachType": "0"},
         description="Default form fields sent with uploads to SI-TECH server (attachType/attactType configurable)",
     )
-    file_manager_timeout_sec: int = Field(30, description="HTTP timeout for file server operations")
+    file_manager_timeout_sec: int = Field(120, description="HTTP timeout for file server operations")
     file_manager_verify_tls: bool = Field(True, description="Verify TLS certificates for file server calls")
     file_manager_auth_header: str = Field(
         "Authorization", description="Header name for token-based authentication when provided"
@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     sample_char_limit: int = Field(5000, description="仅按字符抽取时的上限长度")
     probe_timeout_sec: int = Field(60, description="Timeout for probe tasks")
     conversion_timeout_sec: int = Field(180, description="Timeout for conversion task result")
+
+    log_dir: str = Field("./logs", description="Directory for pipeline log files")
+    log_level: str = Field("INFO", description="Root log level")
+    log_backup_count: int = Field(7, description="Number of rotated log files to keep")
 
     api_title: str = "Pipeline Service"
     api_version: str = "v1"

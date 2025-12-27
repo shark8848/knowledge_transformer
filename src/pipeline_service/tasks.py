@@ -12,10 +12,12 @@ from celery import chain
 from pypdf import PdfReader, PdfWriter
 
 from .celery_app import pipeline_celery
+from .logging_config import setup_logging
 from .config import get_settings
 from .minio_client import get_minio_client
 from .utils import is_markdown_target, normalize_source_format, normalize_target_format, prefer_markdown_target
 
+setup_logging()
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
